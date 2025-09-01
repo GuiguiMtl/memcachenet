@@ -52,10 +52,10 @@ public class MemCacheServer : IHostedService
             await _connectionSemaphore.WaitAsync(token);
             try
             {
-                using var connectionHandler = new MemCacheConnectionHandler(
+                var connectionHandler = new MemCacheConnectionHandler(
                     await _listener.AcceptTcpClientAsync(token), 
                     OnCommandLineRead);
-                _ = connectionHandler.HandleConnectionAsync();
+                _ = connectionHandler.HandleConnectionAsync().ContinueWith(_ => connectionHandler.Dispose());
             }
             catch (OperationCanceledException)
             {
@@ -72,9 +72,10 @@ public class MemCacheServer : IHostedService
         return Task.CompletedTask;
     }
 
-    private void OnCommandLineRead(ReadOnlySequence<byte> line)
+    private async void OnCommandLineRead(ReadOnlySequence<byte> line, Func<byte[], Task> writeResponse)
     {
-        var command  = _parser.ParseCommand(line);
-        command.HandleAsync(_commandHandler);
+        var command = _parser.ParseCommand(line);
+        var response = await command.HandleAsync(_commandHandler);
+        await writeResponse(response);
     }
 }

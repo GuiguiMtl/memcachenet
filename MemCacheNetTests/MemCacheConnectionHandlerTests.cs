@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using memcachenet.MemCacheServer;
@@ -25,7 +26,7 @@ public class MemCacheConnectionHandlerTests
         _mockClient?.Dispose();
     }
 
-    private void OnLineReadCallback(ReadOnlySequence<byte> line)
+    private void OnLineReadCallback(ReadOnlySequence<byte> line, Func<byte[], Task> writeResponse)
     {
         // Convert to string immediately to avoid memory invalidation
         if (!line.IsEmpty && line.Length > 0)
@@ -260,10 +261,69 @@ public class MemCacheConnectionHandlerTests
         var buffer = CreateBuffer(input);
         
         // Act
-        OnLineReadCallback(buffer);
+        OnLineReadCallback(buffer, _ => Task.CompletedTask);
         
         // Assert
         Assert.That(_capturedLines, Has.Count.EqualTo(1));
         Assert.That(_capturedLines[0], Is.EqualTo(expected));
+    }
+    
+    [Test]
+    public async Task HandleConnectionAsync_SendsCommandReceivesResponse()
+    {
+        // Arrange
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        
+        var receivedResponses = new List<string>();
+        var responseReceived = new TaskCompletionSource<bool>();
+        
+        // Setup connection handler that sends a response when command is received
+        var connectionTask = Task.Run(async () =>
+        {
+            var client = await listener.AcceptTcpClientAsync();
+            using var connectionHandler = new MemCacheConnectionHandler(client, 
+                async (line, writeResponse) =>
+                {
+                    // Simulate command processing and response
+                    var command = Encoding.UTF8.GetString(line.ToArray()).Trim();
+                    byte[] response;
+                    if (command.StartsWith("set"))
+                    {
+                        response = Encoding.UTF8.GetBytes("STORED\r\n");
+                    }
+                    else if (command.StartsWith("get"))
+                    {
+                        response = Encoding.UTF8.GetBytes("END\r\n");
+                    }
+                    else
+                    {
+                        response = Encoding.UTF8.GetBytes("ERROR\r\n");
+                    }
+                    await writeResponse(response);
+                });
+            await connectionHandler.HandleConnectionAsync();
+        });
+        
+        // Act - Connect as client and send command
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, port);
+        var stream = client.GetStream();
+        
+        // Send a SET command
+        var command = Encoding.UTF8.GetBytes("set key 0 300 5\r\nhello\r\n");
+        await stream.WriteAsync(command);
+        
+        // Read response
+        var buffer = new byte[1024];
+        var bytesRead = await stream.ReadAsync(buffer);
+        var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+        
+        // Assert
+        Assert.That(response, Is.EqualTo("STORED\r\n"));
+        
+        // Cleanup
+        listener.Stop();
     }
 }

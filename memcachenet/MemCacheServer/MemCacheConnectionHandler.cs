@@ -8,10 +8,11 @@ namespace memcachenet.MemCacheServer;
 public class MemCacheConnectionHandler : IDisposable
 {
     private readonly TcpClient _client;
-    private readonly Action<ReadOnlySequence<byte>>? onLineRead;
+    private readonly Action<ReadOnlySequence<byte>, Func<byte[], Task>>? onLineRead;
+    private NetworkStream? _stream;
 
     public MemCacheConnectionHandler(TcpClient client,
-    Action<ReadOnlySequence<byte>>? onLineRead)
+    Action<ReadOnlySequence<byte>, Func<byte[], Task>>? onLineRead)
     {
         if (client == null)
         {
@@ -24,9 +25,9 @@ public class MemCacheConnectionHandler : IDisposable
 
     public async Task HandleConnectionAsync()
     {
-        var stream = _client.GetStream();
+        _stream = _client.GetStream();
         var pipe = new Pipe();
-        Task writing = FillPipeAsync(stream, pipe.Writer);
+        Task writing = FillPipeAsync(_stream, pipe.Writer);
         Task reading = ReadPipeAsync(pipe.Reader);
         
         await Task.WhenAll(reading, writing);
@@ -79,7 +80,7 @@ public class MemCacheConnectionHandler : IDisposable
             while (TryReadLine(ref buffer, out ReadOnlySequence<byte> line))
             {
                 // invoke the callback when a line is read
-                onLineRead?.Invoke(line);
+                onLineRead?.Invoke(line, WriteResponseAsync);
             }
 
             // Tell the PipeReader how much of the buffer has been consumed.
@@ -130,6 +131,15 @@ public class MemCacheConnectionHandler : IDisposable
         line = buffer.Slice(0, buffer.GetPosition(1, nlPosition.Value));
         buffer = buffer.Slice(buffer.GetPosition(1, nlPosition.Value));
         return true;
+    }
+
+    public async Task WriteResponseAsync(byte[] response)
+    {
+        if (_stream != null && response.Length > 0)
+        {
+            await _stream.WriteAsync(response);
+            await _stream.FlushAsync();
+        }
     }
 
     public void Dispose()
