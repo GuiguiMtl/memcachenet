@@ -8,10 +8,10 @@ namespace memcachenet.MemCacheServer;
 public class MemCacheConnectionHandler : IDisposable
 {
     private readonly TcpClient _client;
-    private readonly MemCacheCommandParser _commandParser;
-    private readonly MemCacheCommandHandler _memCacheCommandHandler;
+    private readonly Action<ReadOnlySequence<byte>>? onLineRead;
 
-    public MemCacheConnectionHandler(TcpClient client)
+    public MemCacheConnectionHandler(TcpClient client,
+    Action<ReadOnlySequence<byte>>? onLineRead)
     {
         if (client == null)
         {
@@ -19,8 +19,7 @@ public class MemCacheConnectionHandler : IDisposable
         }
         
         _client = client;
-        _commandParser = new MemCacheCommandParser(300, 102400);
-        _memCacheCommandHandler = new MemCacheCommandHandler();
+        this.onLineRead = onLineRead;
     }
 
     public async Task HandleConnectionAsync()
@@ -79,9 +78,8 @@ public class MemCacheConnectionHandler : IDisposable
 
             while (TryReadLine(ref buffer, out ReadOnlySequence<byte> line))
             {
-                // Process the line.
-                var command  = _commandParser.ParseCommand(line);
-                command.Handle(_memCacheCommandHandler);
+                // invoke the callback when a line is read
+                onLineRead?.Invoke(line);
             }
 
             // Tell the PipeReader how much of the buffer has been consumed.
@@ -100,18 +98,37 @@ public class MemCacheConnectionHandler : IDisposable
     
     bool TryReadLine(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> line)
     {
-        // Look for a EOL in the buffer.
-        SequencePosition? position = buffer.PositionOf((byte)'\n');
+        // Look for \r\n in the buffer (memcache protocol requires CRLF).
+        SequencePosition? nlPosition = buffer.PositionOf((byte)'\n');
 
-        if (position == null)
+        if (nlPosition == null)
         {
             line = default;
             return false;
         }
 
-        // Skip the line + the \n.
-        line = buffer.Slice(0, position.Value);
-        buffer = buffer.Slice(buffer.GetPosition(1, position.Value));
+        // Check if there's a \r immediately before the \n
+        // Check if we have enough data before the \n position for \r\n
+        var beforeN = buffer.Slice(0, nlPosition.Value);
+        if (beforeN.Length == 0)
+        {
+            // \n is at the very beginning, no \r possible
+            line = default;
+            return false;
+        }
+        
+        // Check the last byte before \n to see if it's \r
+        var lastByte = beforeN.Slice(beforeN.Length - 1, 1).First.Span[0];
+        if (lastByte != (byte)'\r')
+        {
+            // No \r before \n, this is not a valid CRLF line ending
+            line = default;
+            return false;
+        }
+
+        // Include the line + the \r\n in the extracted line.
+        line = buffer.Slice(0, buffer.GetPosition(1, nlPosition.Value));
+        buffer = buffer.Slice(buffer.GetPosition(1, nlPosition.Value));
         return true;
     }
 

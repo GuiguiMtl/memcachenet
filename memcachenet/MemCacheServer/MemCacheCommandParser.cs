@@ -6,7 +6,7 @@ using System.Text.Unicode;
 
 namespace memcachenet.MemCacheServer;
 
-public class MemCacheCommandParser(int maxKeySize, int maxDataSize)
+public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandParser<IMemCacheCommand>
 {
     public IMemCacheCommand ParseCommand(ReadOnlySequence<byte> buffer)
     {

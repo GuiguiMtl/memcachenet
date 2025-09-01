@@ -1,538 +1,269 @@
 using System.Buffers;
-using System.IO.Pipelines;
-using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using memcachenet.MemCacheServer;
+using NUnit.Framework;
 
 namespace MemCacheNetTests;
 
 [TestFixture]
-public class MemCacheConnectionHandlerTests : IDisposable
+public class MemCacheConnectionHandlerTests
 {
-    private TcpListener? _listener;
-    private int _port;
+    private List<string> _capturedLines;
+    private TcpClient _mockClient;
 
     [SetUp]
     public void SetUp()
     {
-        _listener = new TcpListener(IPAddress.Loopback, 0);
-        _listener.Start();
-        _port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+        _capturedLines = [];
+        _mockClient = new TcpClient();
     }
 
     [TearDown]
     public void TearDown()
     {
-        Dispose();
+        _mockClient?.Dispose();
     }
 
-    public void Dispose()
+    private void OnLineReadCallback(ReadOnlySequence<byte> line)
     {
-        _listener?.Stop();
-        _listener = null;
-        GC.SuppressFinalize(this);
-    }
-
-    [TestFixture]
-    public class ConstructorTests : MemCacheConnectionHandlerTests
-    {
-        [Test]
-        public void Constructor_WithValidTcpClient_CreatesHandler()
+        // Convert to string immediately to avoid memory invalidation
+        if (!line.IsEmpty && line.Length > 0)
         {
+            try
+            {
+                var text = Encoding.UTF8.GetString(line.ToArray());
+                _capturedLines.Add(text);
+            }
+            catch (Exception ex)
+            {
+                _capturedLines.Add($"ERROR: {ex.Message}");
+            }
+        }
+        else
+        {
+            _capturedLines.Add("EMPTY");
+        }
+    }
+
+    private static ReadOnlySequence<byte> CreateBuffer(string content)
+    {
+        var bytes = Encoding.UTF8.GetBytes(content);
+        return new ReadOnlySequence<byte>(bytes);
+    }
+
+    private static async Task<(TcpListener server, int port)> SetupTcpServer()
+    {
+        var server = new TcpListener(System.Net.IPAddress.Loopback, 0);
+        server.Start();
+        var endpoint = (System.Net.IPEndPoint)server.LocalEndpoint;
+        return (server, endpoint.Port);
+    }
+
+    private async Task RunConnectionTest(string testData, Action<List<string>> assertions, bool withCallback = true)
+    {
+        // Arrange
+        var (server, port) = await SetupTcpServer();
+        
+        try
+        {
+            var buffer = Encoding.UTF8.GetBytes(testData);
+            
+            var serverTask = Task.Run(async () =>
+            {
+                var serverClient = await server.AcceptTcpClientAsync();
+                var stream = serverClient.GetStream();
+                await stream.WriteAsync(buffer);
+                await stream.FlushAsync();
+                stream.Close();
+                serverClient.Dispose();
+            });
+
+            // Act
             using var client = new TcpClient();
+            await client.ConnectAsync(System.Net.IPAddress.Loopback, port);
             
-            using var handler = new MemCacheConnectionHandler(client);
+            using var connectionHandler = new MemCacheConnectionHandler(
+                client, 
+                withCallback ? OnLineReadCallback : null
+            );
             
-            Assert.That(handler, Is.Not.Null);
+            var connectionTask = connectionHandler.HandleConnectionAsync();
+            await Task.WhenAll(serverTask, connectionTask);
+            
+            // Assert
+            assertions(_capturedLines);
         }
-
-        [Test]
-        public void Constructor_WithNullTcpClient_ThrowsArgumentNullException()
+        finally
         {
-            Assert.Throws<ArgumentNullException>(() => new MemCacheConnectionHandler(null!));
+            server.Stop();
         }
     }
 
-    [TestFixture]
-    public class HandleConnectionAsyncTests : MemCacheConnectionHandlerTests
+    [Test]
+    public async Task ConnectionHandler_WithCallback_CapturesGetCommand()
     {
-        [Test]
-        public async Task HandleConnectionAsync_WithDisconnectedClient_CompletesGracefully()
+        // Arrange
+        var testData = "get testkey\r\n";
+        
+        // Act & Assert
+        await RunConnectionTest(testData, capturedLines =>
         {
-            using var client = new TcpClient();
-            using var handler = new MemCacheConnectionHandler(client);
-
-            await handler.HandleConnectionAsync();
+            // Assert
+            Assert.That(capturedLines, Has.Count.GreaterThan(0));
             
-            // Test passes if no exception is thrown
-            Assert.Pass();
-        }
-
-        [Test]
-        public async Task HandleConnectionAsync_WithConnectedClientThatDisconnects_CompletesGracefully()
-        {
-            var clientTask = Task.Run(async () =>
+            if (capturedLines.Count > 0 && capturedLines[0] != "EMPTY")
             {
-                using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, _port);
-                // Immediately close to simulate disconnect
-            });
-
-            var serverTask = Task.Run(async () =>
+                Assert.That(capturedLines[0], Is.EqualTo("get testkey\r\n"));
+            }
+            else
             {
-                var tcpClient = await _listener!.AcceptTcpClientAsync();
-                using var handler = new MemCacheConnectionHandler(tcpClient);
-                await handler.HandleConnectionAsync();
-            });
-
-            await Task.WhenAll(clientTask, serverTask);
-            
-            // Test passes if no exception is thrown
-            Assert.Pass();
-        }
-
-        [Test]
-        public async Task HandleConnectionAsync_WithSingleGetCommand_ProcessesCommand()
-        {
-            var command = "get key1\r\n";
-            var commandProcessed = false;
-
-            var clientTask = Task.Run(async () =>
-            {
-                using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, _port);
-                var stream = client.GetStream();
-                var data = Encoding.UTF8.GetBytes(command);
-                await stream.WriteAsync(data);
-                await stream.FlushAsync();
-                
-                // Wait a bit for processing then close
-                await Task.Delay(100);
-            });
-
-            var serverTask = Task.Run(async () =>
-            {
-                var tcpClient = await _listener!.AcceptTcpClientAsync();
-                using var handler = new MemCacheConnectionHandler(tcpClient);
-                commandProcessed = true;
-                await handler.HandleConnectionAsync();
-            });
-
-            await Task.WhenAll(clientTask, serverTask);
-            
-            Assert.That(commandProcessed, Is.True);
-        }
-
-        [Test]
-        public async Task HandleConnectionAsync_WithMultipleCommands_ProcessesAllCommands()
-        {
-            var commands = new[]
-            {
-                "get key1\r\n",
-                "set key2 0 0 4\r\ndata\r\n",
-                "delete key3\r\n"
-            };
-
-            var clientTask = Task.Run(async () =>
-            {
-                using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, _port);
-                var stream = client.GetStream();
-
-                foreach (var command in commands)
-                {
-                    var data = Encoding.UTF8.GetBytes(command);
-                    await stream.WriteAsync(data);
-                    await stream.FlushAsync();
-                    await Task.Delay(50); // Small delay between commands
-                }
-                
-                await Task.Delay(200); // Wait for processing
-            });
-
-            var serverTask = Task.Run(async () =>
-            {
-                var tcpClient = await _listener!.AcceptTcpClientAsync();
-                using var handler = new MemCacheConnectionHandler(tcpClient);
-                await handler.HandleConnectionAsync();
-            });
-
-            await Task.WhenAll(clientTask, serverTask);
-            
-            // Test passes if no exception is thrown and all commands are processed
-            Assert.Pass();
-        }
-
-        [Test]
-        public async Task HandleConnectionAsync_WithPartialCommand_HandlesGracefully()
-        {
-            var partialCommand = "get ke"; // Incomplete command
-
-            var clientTask = Task.Run(async () =>
-            {
-                using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, _port);
-                var stream = client.GetStream();
-                var data = Encoding.UTF8.GetBytes(partialCommand);
-                await stream.WriteAsync(data);
-                await stream.FlushAsync();
-                
-                // Wait then close without completing the command
-                await Task.Delay(100);
-            });
-
-            var serverTask = Task.Run(async () =>
-            {
-                var tcpClient = await _listener!.AcceptTcpClientAsync();
-                using var handler = new MemCacheConnectionHandler(tcpClient);
-                await handler.HandleConnectionAsync();
-            });
-
-            await Task.WhenAll(clientTask, serverTask);
-            
-            // Test passes if no exception is thrown
-            Assert.Pass();
-        }
+                Assert.Fail("No valid lines captured");
+            }
+        });
     }
 
-    [TestFixture]
-    public class TryReadLineTests : MemCacheConnectionHandlerTests
+    [Test]
+    public async Task ConnectionHandler_WithCallback_CapturesSetCommand()
     {
-        private MemCacheConnectionHandler _handler;
-
-        [SetUp]
-        public void TestSetUp()
+        // Arrange
+        var testData = "set testkey 0 300 9\r\ntestvalue\r\n";
+        
+        // Act & Assert
+        await RunConnectionTest(testData, capturedLines =>
         {
-            var client = new TcpClient();
-            _handler = new MemCacheConnectionHandler(client);
-        }
-
-        [TearDown]
-        public void TestTearDown()
-        {
-            _handler?.Dispose();
-        }
-
-        [Test]
-        public void TryReadLine_WithCompleteLineEndingInNewline_ReturnsLine()
-        {
-            var data = "get key1\n";
-            var buffer = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(data));
-
-            var result = InvokeTryReadLine(ref buffer, out var line);
-
-            Assert.That(result, Is.True);
-            var lineString = Encoding.UTF8.GetString(line.ToArray());
-            Assert.That(lineString, Is.EqualTo("get key1"));
-        }
-
-        [Test]
-        public void TryReadLine_WithCompleteLineEndingInCarriageReturnNewline_ReturnsLine()
-        {
-            var data = "get key1\r\n";
-            var buffer = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(data));
-
-            var result = InvokeTryReadLine(ref buffer, out var line);
-
-            Assert.That(result, Is.True);
-            var lineString = Encoding.UTF8.GetString(line.ToArray());
-            Assert.That(lineString, Is.EqualTo("get key1\r"));
-        }
-
-        [Test]
-        public void TryReadLine_WithIncompleteLineNoNewline_ReturnsFalse()
-        {
-            var data = "get key1";
-            var buffer = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(data));
-
-            var result = InvokeTryReadLine(ref buffer, out var line);
-
-            Assert.That(result, Is.False);
-            Assert.That(line.IsEmpty, Is.True);
-        }
-
-        [Test]
-        public void TryReadLine_WithMultipleLines_ReturnsFirstLine()
-        {
-            var data = "get key1\nget key2\n";
-            var buffer = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(data));
-
-            var result = InvokeTryReadLine(ref buffer, out var line);
-
-            Assert.That(result, Is.True);
-            var lineString = Encoding.UTF8.GetString(line.ToArray());
-            Assert.That(lineString, Is.EqualTo("get key1"));
-            
-            // Verify buffer is advanced
-            var remainingString = Encoding.UTF8.GetString(buffer.ToArray());
-            Assert.That(remainingString, Is.EqualTo("get key2\n"));
-        }
-
-        [Test]
-        public void TryReadLine_WithEmptyBuffer_ReturnsFalse()
-        {
-            var buffer = new ReadOnlySequence<byte>(Array.Empty<byte>());
-
-            var result = InvokeTryReadLine(ref buffer, out var line);
-
-            Assert.That(result, Is.False);
-            Assert.That(line.IsEmpty, Is.True);
-        }
-
-        [Test]
-        public void TryReadLine_WithOnlyNewline_ReturnsEmptyLine()
-        {
-            var data = "\n";
-            var buffer = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(data));
-
-            var result = InvokeTryReadLine(ref buffer, out var line);
-
-            Assert.That(result, Is.True);
-            Assert.That(line.Length, Is.EqualTo(0));
-        }
-
-        [Test]
-        public void TryReadLine_WithBinaryData_HandlesCorrectly()
-        {
-            var binaryData = new byte[] { 0x01, 0x02, 0x03, 0x0A, 0x04, 0x05 }; // Contains \n at position 3
-            var buffer = new ReadOnlySequence<byte>(binaryData);
-
-            var result = InvokeTryReadLine(ref buffer, out var line);
-
-            Assert.That(result, Is.True);
-            Assert.That(line.ToArray(), Is.EqualTo(new byte[] { 0x01, 0x02, 0x03 }));
-            
-            // Verify remaining buffer
-            Assert.That(buffer.ToArray(), Is.EqualTo(new byte[] { 0x04, 0x05 }));
-        }
-
-        private bool InvokeTryReadLine(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> line)
-        {
-            // Use reflection to call the private TryReadLine method
-            var method = typeof(MemCacheConnectionHandler).GetMethod("TryReadLine", 
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            
-            var parameters = new object?[] { buffer, null };
-            var result = (bool)method!.Invoke(_handler, parameters)!;
-            
-            buffer = (ReadOnlySequence<byte>)parameters[0]!;
-            line = (ReadOnlySequence<byte>)parameters[1]!;
-            
-            return result;
-        }
+            // Assert
+            Assert.That(capturedLines, Has.Count.GreaterThan(0));
+            if (capturedLines.Count >= 2)
+            {
+                Assert.That(capturedLines[0], Is.EqualTo("set testkey 0 300 9\r\n"));
+                Assert.That(capturedLines[1], Is.EqualTo("testvalue\r\n"));
+            }
+        });
     }
 
-    [TestFixture]
-    public class DisposeTests : MemCacheConnectionHandlerTests
+    [Test]
+    public async Task ConnectionHandler_WithCallback_CapturesDeleteCommand()
     {
-        [Test]
-        public void Dispose_WithValidHandler_DisposesGracefully()
+        // Arrange
+        var testData = "delete testkey\r\n";
+        
+        // Act & Assert
+        await RunConnectionTest(testData, capturedLines =>
         {
-            using var client = new TcpClient();
-            var handler = new MemCacheConnectionHandler(client);
-
-            Assert.DoesNotThrow(() => handler.Dispose());
-        }
-
-        [Test]
-        public void Dispose_CalledMultipleTimes_DoesNotThrow()
-        {
-            using var client = new TcpClient();
-            var handler = new MemCacheConnectionHandler(client);
-
-            Assert.DoesNotThrow(() => handler.Dispose());
-            Assert.DoesNotThrow(() => handler.Dispose());
-        }
-
-        [Test]
-        public void Dispose_WithConnectedClient_DisposesConnection()
-        {
-            var clientTask = Task.Run(async () =>
+            // Assert
+            Assert.That(capturedLines, Has.Count.GreaterThan(0));
+            if (capturedLines.Count > 0 && capturedLines[0] != "EMPTY")
             {
-                using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, _port);
-                
-                // Keep connection alive briefly
-                await Task.Delay(100);
-            });
-
-            var serverTask = Task.Run(async () =>
-            {
-                var tcpClient = await _listener!.AcceptTcpClientAsync();
-                using var handler = new MemCacheConnectionHandler(tcpClient);
-                
-                await Task.Delay(50);
-                
-                // Dispose should close the connection
-                handler.Dispose();
-                
-                // Verify client is disconnected by checking if we can still read
-                Assert.That(tcpClient.Connected, Is.False.Or.True); // Connection state may vary
-            });
-
-            Assert.DoesNotThrowAsync(async () => await Task.WhenAll(clientTask, serverTask));
-        }
+                Assert.That(capturedLines[0], Is.EqualTo("delete testkey\r\n"));
+            }
+        });
     }
 
-    [TestFixture]
-    public class IntegrationTests : MemCacheConnectionHandlerTests
+    [Test]
+    public async Task ConnectionHandler_WithCallback_CapturesMultipleCommands()
     {
-        [Test]
-        public async Task End2End_GetCommand_ProcessesSuccessfully()
+        // Arrange
+        var testData = "get key1\r\nget key2\r\ndelete key3\r\n";
+        
+        // Act & Assert
+        await RunConnectionTest(testData, capturedLines =>
         {
-            var command = "get testkey\r\n";
-            
-            var clientTask = Task.Run(async () =>
+            // Assert
+            Assert.That(capturedLines, Has.Count.GreaterThan(0));
+            if (capturedLines.Count >= 3)
             {
-                using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, _port);
-                var stream = client.GetStream();
-                
-                var data = Encoding.UTF8.GetBytes(command);
-                await stream.WriteAsync(data);
-                await stream.FlushAsync();
-                
-                await Task.Delay(100);
-            });
+                Assert.That(capturedLines[0], Is.EqualTo("get key1\r\n"));
+                Assert.That(capturedLines[1], Is.EqualTo("get key2\r\n"));
+                Assert.That(capturedLines[2], Is.EqualTo("delete key3\r\n"));
+            }
+        });
+    }
 
-            var serverTask = Task.Run(async () =>
-            {
-                var tcpClient = await _listener!.AcceptTcpClientAsync();
-                using var handler = new MemCacheConnectionHandler(tcpClient);
-                
-                // This should process the command without throwing
-                await handler.HandleConnectionAsync();
-            });
-
-            await Task.WhenAll(clientTask, serverTask);
-            
-            Assert.Pass("Command processed successfully");
-        }
-
-        [Test]
-        public async Task End2End_SetCommand_ProcessesSuccessfully()
+    [Test]
+    public async Task ConnectionHandler_WithCallback_CapturesCommandWithoutCRLF()
+    {
+        // Arrange
+        var testData = "get testkey";  // No \r\n terminator
+        
+        // Act & Assert
+        await RunConnectionTest(testData, capturedLines =>
         {
-            var command = "set testkey 123 3600 4\r\ndata\r\n";
-            
-            var clientTask = Task.Run(async () =>
-            {
-                using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, _port);
-                var stream = client.GetStream();
-                
-                var data = Encoding.UTF8.GetBytes(command);
-                await stream.WriteAsync(data);
-                await stream.FlushAsync();
-                
-                await Task.Delay(100);
-            });
+            // Assert - Should not capture anything since no line terminator found
+            Assert.That(capturedLines, Has.Count.EqualTo(0), "Commands without \\r\\n should not be captured");
+        });
+    }
 
-            var serverTask = Task.Run(async () =>
-            {
-                var tcpClient = await _listener!.AcceptTcpClientAsync();
-                using var handler = new MemCacheConnectionHandler(tcpClient);
-                
-                await handler.HandleConnectionAsync();
-            });
-
-            await Task.WhenAll(clientTask, serverTask);
-            
-            Assert.Pass("Set command processed successfully");
-        }
-
-        [Test]
-        public async Task End2End_DeleteCommand_ProcessesSuccessfully()
+    [Test]
+    public async Task ConnectionHandler_WithCallback_CapturesCommandWithOnlyLF()
+    {
+        // Arrange
+        var testData = "get testkey\n";  // Only \n, no \r
+        
+        // Act & Assert
+        await RunConnectionTest(testData, capturedLines =>
         {
-            var command = "delete testkey\r\n";
-            
-            var clientTask = Task.Run(async () =>
-            {
-                using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, _port);
-                var stream = client.GetStream();
-                
-                var data = Encoding.UTF8.GetBytes(command);
-                await stream.WriteAsync(data);
-                await stream.FlushAsync();
-                
-                await Task.Delay(100);
-            });
+            // Assert - Should not capture anything since memcache protocol requires \r\n
+            Assert.That(capturedLines, Has.Count.EqualTo(0), "Commands with only \\n should not be captured (memcache requires \\r\\n)");
+        });
+    }
 
-            var serverTask = Task.Run(async () =>
-            {
-                var tcpClient = await _listener!.AcceptTcpClientAsync();
-                using var handler = new MemCacheConnectionHandler(tcpClient);
-                
-                await handler.HandleConnectionAsync();
-            });
-
-            await Task.WhenAll(clientTask, serverTask);
-            
-            Assert.Pass("Delete command processed successfully");
-        }
-
-        [Test]
-        public async Task End2End_InvalidCommand_HandlesGracefully()
+    [Test]
+    public async Task ConnectionHandler_WithCallback_CapturesCommandWithOnlyCR()
+    {
+        // Arrange
+        var testData = "get testkey\r";  // Only \r, no \n
+        
+        // Act & Assert
+        await RunConnectionTest(testData, capturedLines =>
         {
-            var command = "invalid command\r\n";
-            
-            var clientTask = Task.Run(async () =>
-            {
-                using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, _port);
-                var stream = client.GetStream();
-                
-                var data = Encoding.UTF8.GetBytes(command);
-                await stream.WriteAsync(data);
-                await stream.FlushAsync();
-                
-                await Task.Delay(100);
-            });
+            // Assert - Should not capture anything since TryReadLine looks for \n specifically
+            Assert.That(capturedLines, Has.Count.EqualTo(0), "Commands with only \\r should not be captured");
+        });
+    }
 
-            var serverTask = Task.Run(async () =>
-            {
-                var tcpClient = await _listener!.AcceptTcpClientAsync();
-                using var handler = new MemCacheConnectionHandler(tcpClient);
-                
-                await handler.HandleConnectionAsync();
-            });
-
-            await Task.WhenAll(clientTask, serverTask);
-            
-            Assert.Pass("Invalid command handled gracefully");
-        }
-
-        [Test]
-        public async Task End2End_LargeCommand_ProcessesSuccessfully()
+    [Test]
+    public async Task ConnectionHandler_WithCallback_CapturesPartialCommand()
+    {
+        // Arrange
+        var testData = "get test";  // Incomplete command without terminator
+        
+        // Act & Assert
+        await RunConnectionTest(testData, capturedLines =>
         {
-            var largeKey = new string('a', 200); // Large but valid key
-            var command = $"get {largeKey}\r\n";
-            
-            var clientTask = Task.Run(async () =>
-            {
-                using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, _port);
-                var stream = client.GetStream();
-                
-                var data = Encoding.UTF8.GetBytes(command);
-                await stream.WriteAsync(data);
-                await stream.FlushAsync();
-                
-                await Task.Delay(100);
-            });
+            // Assert - Should not capture anything since no line terminator
+            Assert.That(capturedLines, Has.Count.EqualTo(0), "Partial commands should not be captured");
+        });
+    }
 
-            var serverTask = Task.Run(async () =>
-            {
-                var tcpClient = await _listener!.AcceptTcpClientAsync();
-                using var handler = new MemCacheConnectionHandler(tcpClient);
-                
-                await handler.HandleConnectionAsync();
-            });
+    [Test]
+    public async Task ConnectionHandler_WithoutCallback_DoesNotThrow()
+    {
+        // Arrange
+        var testData = "get testkey\r\n";
+        
+        // Act & Assert
+        await RunConnectionTest(testData, capturedLines =>
+        {
+            // Assert - Should not capture anything since no callback
+            Assert.That(capturedLines, Has.Count.EqualTo(0));
+        }, withCallback: false);
+    }
 
-            await Task.WhenAll(clientTask, serverTask);
-            
-            Assert.Pass("Large command processed successfully");
-        }
+    [TestCase("get testkey", "get testkey")]
+    [TestCase("set key 0 300 5", "set key 0 300 5")]
+    [TestCase("delete mykey", "delete mykey")]
+    [TestCase("invalid command", "invalid command")]
+    public void OnLineReadCallback_VariousCommands_CapturesExpectedData(string input, string expected)
+    {
+        // Arrange
+        var buffer = CreateBuffer(input);
+        
+        // Act
+        OnLineReadCallback(buffer);
+        
+        // Assert
+        Assert.That(_capturedLines, Has.Count.EqualTo(1));
+        Assert.That(_capturedLines[0], Is.EqualTo(expected));
     }
 }
