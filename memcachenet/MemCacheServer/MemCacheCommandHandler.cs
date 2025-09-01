@@ -1,32 +1,73 @@
 namespace memcachenet.MemCacheServer;
 
-public interface IMemCacheCommandHandler<in TMemCacheCommand> where TMemCacheCommand : IMemCacheCommand
+public interface IMemCacheCommandHandler<in TMemCacheCommand, TMemCacheResponse> where TMemCacheCommand : IMemCacheCommand
 {
-    void HandleCommand(TMemCacheCommand command);
+    Task<TMemCacheResponse> HandleCommandAsync(TMemCacheCommand command);
 }
 
-public class MemCacheCommandHandler : IMemCacheCommandHandler<GetMemCacheCommand>,
-    IMemCacheCommandHandler<SetMemCacheCommand>,
-    IMemCacheCommandHandler<DeleteMemCacheCommand>, 
-    IMemCacheCommandHandler<InvalidMemCacheCommand> 
+public class MemCacheCommandHandler(IMemCache memCache) : IMemCacheCommandHandler<GetMemCacheCommand, GetMemCacheCommandResponse>,
+    IMemCacheCommandHandler<SetMemCacheCommand, SetMemCacheCommandResponse>,
+    IMemCacheCommandHandler<DeleteMemCacheCommand, DeleteMemeCacheCommandReponse>, 
+    IMemCacheCommandHandler<InvalidMemCacheCommand, InvalidMemCacheCommandReponse> 
 {
-    public void HandleCommand(GetMemCacheCommand command)
+    private readonly IMemCache memCache = memCache;
+
+    public async Task<GetMemCacheCommandResponse> HandleCommandAsync(GetMemCacheCommand command)
     {
-        return;
+        List<MemCacheValue> values = new();
+        foreach (var key in command.Keys)
+        {
+            var item = await memCache.TryGetAsync(key);
+            if (item != null)
+            {
+                values.Add(new MemCacheValue
+                {
+                    Key = key,
+                    Flags = item.Flags,
+                    Bytes = item.Value.Length,
+                    Data = item.Value
+                });
+            }
+        }
+        return new GetMemCacheCommandResponse
+        {
+            Success = true,
+            Values = values
+        };
     }
 
-    public void HandleCommand(SetMemCacheCommand command)
+    public async Task<SetMemCacheCommandResponse> HandleCommandAsync(SetMemCacheCommand command)
     {
-        return;
+        if (!await memCache.SetAsync(command.Key, command.Data, command.Flags))
+        {
+            return new SetMemCacheCommandResponse
+            {
+                ErrorMessage = "Max cache size reached",
+                Success = false
+            };
+        }
+
+        return new SetMemCacheCommandResponse
+        {
+            Success = true
+        };
     }
 
-    public void HandleCommand(DeleteMemCacheCommand command)
+    public async Task<DeleteMemeCacheCommandReponse> HandleCommandAsync(DeleteMemCacheCommand command)
     {
-        return;
+        var success = await memCache.DeleteAsync(command.Key);
+        return new DeleteMemeCacheCommandReponse
+        {
+            Success = success
+        };
     }
 
-    public void HandleCommand(InvalidMemCacheCommand command)
+    public Task<InvalidMemCacheCommandReponse> HandleCommandAsync(InvalidMemCacheCommand command)
     {
-        return;
+        return Task.FromResult(new InvalidMemCacheCommandReponse
+        {
+            Success = false,
+            ErrorMessage = "Invalid command"
+        });
     }
 }

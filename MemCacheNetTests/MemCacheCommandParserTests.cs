@@ -190,7 +190,7 @@ public class MemCacheCommandParserTests
             
             Assert.That(result, Is.Not.Null);
             Assert.That(result.Key, Is.EqualTo("key1"));
-            Assert.That(result.Flag, Is.EqualTo(123u));
+            Assert.That(result.Flags, Is.EqualTo(123u));
             Assert.That(result.Expiration, Is.EqualTo(3600));
             Assert.That(result.Data, Is.EqualTo(Encoding.UTF8.GetBytes(data)));
             Assert.That(result.NoReply, Is.False);
@@ -206,7 +206,7 @@ public class MemCacheCommandParserTests
             
             Assert.That(result, Is.Not.Null);
             Assert.That(result.Key, Is.EqualTo("key1"));
-            Assert.That(result.Flag, Is.EqualTo(123u));
+            Assert.That(result.Flags, Is.EqualTo(123u));
             Assert.That(result.Expiration, Is.EqualTo(3600));
             Assert.That(result.Data, Is.EqualTo(Encoding.UTF8.GetBytes(data)));
             Assert.That(result.NoReply, Is.True);
@@ -328,7 +328,7 @@ public class MemCacheCommandParserTests
             var result = _parser.ParseCommand(buffer) as SetMemCacheCommand;
             
             Assert.That(result, Is.Not.Null);
-            Assert.That(result.Flag, Is.EqualTo(0u));
+            Assert.That(result.Flags, Is.EqualTo(0u));
         }
         
         [Test]
@@ -382,7 +382,7 @@ public class MemCacheCommandParserTests
             var result = _parser.ParseCommand(buffer) as SetMemCacheCommand;
             
             Assert.That(result, Is.Not.Null);
-            Assert.That(result.Flag, Is.EqualTo(4294967295u));
+            Assert.That(result.Flags, Is.EqualTo(4294967295u));
         }
         
     }

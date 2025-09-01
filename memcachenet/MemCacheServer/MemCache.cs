@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Reflection.Metadata;
 using memcachenet.MemCacheServer.EvictionPolicyManager;
 
 namespace memcachenet.MemCacheServer;
@@ -15,7 +16,7 @@ public interface IMemCache
     /// <param name="key">The key to associate with the value. Must be non-null and within protocol limits.</param>
     /// <param name="value">The raw bytes to store.</param>
     /// <param name="Flags">An opaque 32-bit value provided by clients and returned on retrieval.</param>
-    Task SetAsync(string key, byte[] value, uint Flags);
+    Task<bool> SetAsync(string key, byte[] value, uint Flags);
 
     /// <summary>
     /// Attempts to retrieve the value for the specified key.
@@ -26,11 +27,12 @@ public interface IMemCache
     /// </returns>
     Task<MemCacheItem?> TryGetAsync(string key);
 
+
     /// <summary>
     /// Deletes the value associated with the specified key, if it exists.
     /// </summary>
     /// <param name="key">The key to delete.</param>
-    Task DeleteAsync(string key);
+    Task<bool> DeleteAsync(string key);
 
     /// <summary>
     /// Deletes a N given amount of keys that are expired.
@@ -45,11 +47,15 @@ public interface IMemCache
 public class MemCacheBuilder
 {
     private const int DefaultMaxKeys = 300;
+
+    private const int DefaultMaxCacheSize = 102400;
     
     private readonly TimeSpan _defaultExpirationTime = TimeSpan.FromHours(1);
     private readonly IEvictionPolicyManager _defaultEvictionPolicyManager = new LruEvictionPolicyManager();
     
     private int _maxKeys;
+
+    private int _maxCacheSize;
     private TimeSpan _expirationTime;
     private IEvictionPolicyManager _evictionPolicyManager;
 
@@ -59,6 +65,7 @@ public class MemCacheBuilder
     public MemCacheBuilder()
     {
         _maxKeys = DefaultMaxKeys;
+        _maxCacheSize = DefaultMaxCacheSize;
         _expirationTime = _defaultExpirationTime;
         _evictionPolicyManager = _defaultEvictionPolicyManager;
     }
@@ -71,6 +78,17 @@ public class MemCacheBuilder
     public MemCacheBuilder WithMaxKeys(int maxKeys)
     {
         _maxKeys = maxKeys;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the maximum total size of the values in the cache before not allowing new keys.
+    /// </summary>
+    /// <param name="maxCacheSize">Maximum total size for the values of the cache.</param>
+    /// <returns>The same builder instance for chaining.</returns>
+    public MemCacheBuilder WithMaxCacheSize(int maxCacheSize)
+    {
+        _maxCacheSize = maxCacheSize;
         return this;
     }
     
@@ -101,7 +119,7 @@ public class MemCacheBuilder
     /// </summary>
     public MemCache Build()
     {
-        return new MemCache(_maxKeys, _expirationTime, _evictionPolicyManager);
+        return new MemCache(_maxKeys, _maxCacheSize, _expirationTime, _evictionPolicyManager);
     }
 }
 
@@ -113,22 +131,28 @@ public class MemCache : IMemCache
     private readonly SemaphoreSlim _cacheLock = new SemaphoreSlim(1, 1);
 
     private readonly int _maxKeys;
+    private readonly int _maxCacheSize;
     private readonly TimeSpan _expirationTime;
     private readonly ConcurrentDictionary<string, MemCacheItem> _cache;
     private readonly IEvictionPolicyManager _evictionPolicyManager;
-    
+
+    private int _cacheSize;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="MemCache"/> class.
     /// </summary>
     /// <param name="maxKeys">Maximum number of keys allowed before eviction.</param>
+    /// <param name="maxCacheSize">Maximum total size of the values in the cache.</param>
     /// <param name="expirationTime">Default TTL applied to entries when set.</param>
     /// <param name="evictionPolicyManager">Policy manager used to track/access eviction order.</param>
-    public MemCache(int maxKeys, TimeSpan expirationTime, IEvictionPolicyManager evictionPolicyManager)
+    public MemCache(int maxKeys, int maxCacheSize, TimeSpan expirationTime, IEvictionPolicyManager evictionPolicyManager)
     {
         _maxKeys = maxKeys;
+        _maxCacheSize = maxCacheSize;
         _expirationTime = expirationTime;
         _evictionPolicyManager = evictionPolicyManager;
         _cache = new ConcurrentDictionary<string, MemCacheItem>();
+        _cacheSize = 0;
     }
 
     /// <summary>
@@ -137,11 +161,15 @@ public class MemCache : IMemCache
     /// <param name="key">The key to set.</param>
     /// <param name="value">The value bytes to store.</param>
     /// <param name="Flags">Opaque client flags to persist with the value.</param>
-    public async Task SetAsync(string key, byte[] value, uint Flags)
+    public async Task<bool> SetAsync(string key, byte[] value, uint Flags)
     {
+        if (_cacheSize + value.Length > _maxCacheSize)
+        {
+            return false;
+        }
         // lock so it can safely do the operation
         await _cacheLock.WaitAsync();
-        
+
         // Check if we reached the max number of keys
         if (_cache.Count == _maxKeys)
         {
@@ -151,7 +179,7 @@ public class MemCache : IMemCache
             _evictionPolicyManager.Delete(keyToRemove);
             _cache.Remove(keyToRemove, out _);
         }
-        
+
         try
         {
             _cache[key] = new MemCacheItem
@@ -161,12 +189,17 @@ public class MemCache : IMemCache
                 Expiration = DateTime.Now.Add(_expirationTime)
             };
             _evictionPolicyManager.Add(key);
+
+            // update the total size of the cache
+            _cacheSize += value.Length;
         }
         finally
         {
             // release the lock
             _cacheLock.Release();
         }
+
+        return true;
     }
 
     /// <summary>
@@ -205,20 +238,25 @@ public class MemCache : IMemCache
     /// Deletes the specified key from the cache and updates the policy state if present.
     /// </summary>
     /// <param name="key">The key to delete.</param>
-    public async Task DeleteAsync(string key)
+    public async Task<bool> DeleteAsync(string key)
     {
-        if (_cache.Remove(key, out _))
+        if (_cache.Remove(key, out var item))
         {
             await _cacheLock.WaitAsync();
             try
             {
                 _evictionPolicyManager.Delete(key);
+
+                // update the total size of the cache
+                _cacheSize -= item.Value.Length;
             }
             finally
             {
                 _cacheLock.Release();
             }
+            return true;
         }
+        return false;
     }
     
     /// <summary>

@@ -7,20 +7,33 @@ using Microsoft.Extensions.Options;
 
 namespace memcachenet.MemCacheServer;
 
-public class MemCacheServer(ILogger<MemCacheServer> logger,
-IOptions<MemCacheServerSettings> memCacheServerSettings,
-MemCacheCommandParser parser,
-MemCacheCommandHandler commandHandler) : IHostedService
+public class MemCacheServer : IHostedService
 {
-    private readonly TcpListener _listener = new(IPAddress.Any, memCacheServerSettings.Value.Port);
-    private readonly SemaphoreSlim _connectionSemaphore = new(memCacheServerSettings.Value.MaxConcurrentConnections);
-    private readonly IMemCache _memCache = new MemCacheBuilder()
-        .WithExpirationTime(TimeSpan.FromSeconds(memCacheServerSettings.Value.ExpirationTimeSeconds))
-        .WithMaxKeys(memCacheServerSettings.Value.MaxKeys)
-        .Build();
-    private readonly IOptions<MemCacheServerSettings> memCacheServerSettings = memCacheServerSettings;
-    private readonly MemCacheCommandParser parser = parser;
-    private readonly MemCacheCommandHandler commandHandler = commandHandler;
+    private readonly TcpListener _listener;
+    private readonly SemaphoreSlim _connectionSemaphore;
+    private readonly IMemCache _memCache;
+    private readonly MemCacheCommandParser _parser;
+    private readonly MemCacheCommandHandler _commandHandler;
+    private readonly ILogger<MemCacheServer> logger;
+    private readonly IOptions<MemCacheServerSettings> memCacheServerSettings;
+
+    public MemCacheServer(ILogger<MemCacheServer> logger,
+        IOptions<MemCacheServerSettings> memCacheServerSettings,
+        MemCacheCommandParser parser)
+    {
+        this.logger = logger;
+        this.memCacheServerSettings = memCacheServerSettings;
+        this._parser = parser;
+        _memCache = new MemCacheBuilder()
+                            .WithExpirationTime(
+                                TimeSpan.FromSeconds(
+                                    memCacheServerSettings.Value.ExpirationTimeSeconds))
+                            .WithMaxKeys(memCacheServerSettings.Value.MaxKeys)
+                            .WithMaxCacheSize(memCacheServerSettings.Value.MaxKeySizeBytes).Build();
+        this._commandHandler = new MemCacheCommandHandler(_memCache);
+        this._connectionSemaphore = new SemaphoreSlim(memCacheServerSettings.Value.MaxConcurrentConnections);
+        this._listener = new(IPAddress.Any, memCacheServerSettings.Value.Port);
+    }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -61,7 +74,7 @@ MemCacheCommandHandler commandHandler) : IHostedService
 
     private void OnCommandLineRead(ReadOnlySequence<byte> line)
     {
-        var command  = parser.ParseCommand(line);
-        command.Handle(commandHandler);
+        var command  = _parser.ParseCommand(line);
+        command.HandleAsync(_commandHandler);
     }
 }
