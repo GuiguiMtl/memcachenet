@@ -94,10 +94,10 @@ public class MemCacheConnectionHandler(
             ReadResult result = await reader.ReadAsync();
             ReadOnlySequence<byte> buffer = result.Buffer;
 
-            while (TryReadLine(ref buffer, out ReadOnlySequence<byte> line))
+            while (TryReadMemCacheCommand(ref buffer, out ReadOnlySequence<byte> command))
             {
-                // invoke the callback when a line is read
-                onLineRead?.Invoke(line, WriteResponseAsync);
+                // invoke the callback when a command is read
+                onLineRead?.Invoke(command, WriteResponseAsync);
             }
 
             // Tell the PipeReader how much of the buffer has been consumed.
@@ -120,6 +120,112 @@ public class MemCacheConnectionHandler(
     /// <param name="buffer">The buffer to read from, modified to exclude the processed line.</param>
     /// <param name="line">The output line including the CRLF terminator.</param>
     /// <returns>True if a complete line was found; otherwise, false.</returns>
+    bool TryReadMemCacheCommand(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> command)
+    {
+        command = default;
+        
+        // First, try to find a complete command line (ending with \r\n)
+        var reader = new SequenceReader<byte>(buffer);
+        if (!reader.TryReadTo(out ReadOnlySequence<byte> commandLine, new byte[] { (byte)'\r', (byte)'\n' }))
+        {
+            return false; // No complete command line found
+        }
+        
+        // Check if this is a SET command that needs special handling
+        var commandLineReader = new SequenceReader<byte>(commandLine);
+        if (commandLineReader.TryReadTo(out ReadOnlySpan<byte> commandSpan, (byte)' '))
+        {
+            var commandText = System.Text.Encoding.UTF8.GetString(commandSpan);
+            if (commandText.Equals("set", StringComparison.OrdinalIgnoreCase))
+            {
+                // This is a SET command - we need to read the data block too
+                return TryReadSetCommand(ref buffer, out command);
+            }
+        }
+        
+        // For non-SET commands (GET, DELETE, etc.), just return the command line
+        var commandLineWithCrlf = buffer.Slice(0, reader.Position);
+        command = commandLineWithCrlf;
+        buffer = buffer.Slice(reader.Position);
+        return true;
+    }
+
+    bool TryReadSetCommand(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> command)
+    {
+        command = default;
+        var reader = new SequenceReader<byte>(buffer);
+        
+        // Read the command line (already validated to exist)
+        if (!reader.TryReadTo(out ReadOnlySequence<byte> commandLine, new byte[] { (byte)'\r', (byte)'\n' }))
+        {
+            return false;
+        }
+        
+        // Parse the command line to extract the data length
+        var dataLength = ExtractDataLengthFromSetCommand(commandLine);
+        if (dataLength < 0)
+        {
+            return false; // Invalid SET command format
+        }
+        
+        // Check if we have enough data for the complete command (data + \r\n)
+        if (reader.Remaining < dataLength + 2)
+        {
+            return false; // Not enough data available yet
+        }
+        
+        // Advance reader past the data block and its trailing \r\n
+        reader.Advance(dataLength);
+        if (reader.Remaining >= 2 && reader.UnreadSpan[0] == (byte)'\r' && reader.UnreadSpan[1] == (byte)'\n')
+        {
+            reader.Advance(2);
+        }
+        
+        // Return the complete command from start to current reader position
+        command = buffer.Slice(0, reader.Position);
+        buffer = buffer.Slice(reader.Position);
+        
+        return true;
+    }
+    
+    int ExtractDataLengthFromSetCommand(ReadOnlySequence<byte> commandLine)
+    {
+        var reader = new SequenceReader<byte>(commandLine);
+        
+        try
+        {
+            // Skip "set" command
+            if (!reader.TryReadTo(out ReadOnlySpan<byte> _, (byte)' ')) return -1;
+            
+            // Skip key
+            if (!reader.TryReadTo(out ReadOnlySpan<byte> _, (byte)' ')) return -1;
+            
+            // Skip flags
+            if (!reader.TryReadTo(out ReadOnlySpan<byte> _, (byte)' ')) return -1;
+            
+            // Skip expiration
+            if (!reader.TryReadTo(out ReadOnlySpan<byte> _, (byte)' ')) return -1;
+            
+            // Read data length
+            if (!reader.TryReadTo(out ReadOnlySpan<byte> dataLengthSpan, (byte)' '))
+            {
+                // No space found, read to end (no noreply parameter)
+                dataLengthSpan = reader.UnreadSpan;
+            }
+            
+            if (int.TryParse(System.Text.Encoding.UTF8.GetString(dataLengthSpan), out int dataLength))
+            {
+                return dataLength;
+            }
+        }
+        catch
+        {
+            // Parsing failed
+        }
+        
+        return -1;
+    }
+
     bool TryReadLine(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> line)
     {
         line = default;
