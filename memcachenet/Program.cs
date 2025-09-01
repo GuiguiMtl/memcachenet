@@ -8,32 +8,41 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        var builder = Host.CreateApplicationBuilder(args);
+        try
+        {
+            var builder = Host.CreateApplicationBuilder(args);
 
-        builder.Services.Configure<MemCacheServerSettings>(builder.Configuration.GetSection("MemCacheServerSettings"));
-        builder.Services.Configure<ExpirationManagerSettings>(builder.Configuration.GetSection("ExpirationManagerSettings"));
-        
+            builder.Services.Configure<MemCacheServerSettings>(
+                builder.Configuration.GetSection("MemCacheServerSettings"));
+            builder.Services.Configure<ExpirationManagerSettings>(
+                builder.Configuration.GetSection("ExpirationManagerSettings"));
 
-        builder.Services.AddSingleton<MemCacheServer.MemCacheServer>();
-        builder.Services.AddSingleton<ExpirationManagerService>();
-        builder.Services.AddSingleton<MemCacheCommandParser>();
-                
-        builder.Services.AddHostedService(p => p.GetRequiredService<MemCacheServer.MemCacheServer>());
-        builder.Services.AddHostedService(p => p.GetRequiredService<ExpirationManagerService>());
-        
-        var app = builder.Build();
 
-        // 1. Start the host. This calls StartAsync on all IHostedService instances.
-        await app.StartAsync();
+            builder.Services.AddSingleton<MemCacheServer.MemCacheServer>();
+            builder.Services.AddSingleton<ExpirationManagerService>();
+            builder.Services.AddSingleton<MemCacheCommandParser>();
 
-        // The server is now running in the background.
+            builder.Services.AddHostedService(p => p.GetRequiredService<MemCacheServer.MemCacheServer>());
+            builder.Services.AddHostedService(p => p.GetRequiredService<ExpirationManagerService>());
 
-        // 2. Run the CLI on the main thread.
-        // Here we could handle commands that would be done directly to the mem cache. Out of Scope for this project
-        RunCommandLineInterface(app.Services);
+            var app = builder.Build();
 
-        // 3. Stop the host gracefully when the CLI exits.
-        await app.StopAsync();
+            // 1. Start the host. This calls StartAsync on all IHostedService instances.
+            await app.StartAsync();
+
+            // The server is now running in the background.
+
+            // 2. Run the CLI on the main thread.
+            // Here we could handle commands that would be done directly to the mem cache. Out of Scope for this project
+            RunCommandLineInterface(app.Services);
+
+            // 3. Stop the host gracefully when the CLI exits.
+            await app.StopAsync();
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+        }
     }
     
     private static void RunCommandLineInterface(IServiceProvider services)

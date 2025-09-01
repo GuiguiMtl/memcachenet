@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using System.Text;
 using FluentAssertions;
+using NUnit.Framework;
 
 public class CreateTests
 {
@@ -8,7 +9,7 @@ public class CreateTests
     {
     }
 
-    [Fact]
+    [Test]
     public async Task CreateMemeCacheEntry_ShouldSucceed()
     {
         // Arrange

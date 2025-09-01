@@ -122,37 +122,48 @@ public class MemCacheConnectionHandler(
     /// <returns>True if a complete line was found; otherwise, false.</returns>
     bool TryReadLine(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> line)
     {
-        // Look for \r\n in the buffer (memcache protocol requires CRLF).
-        SequencePosition? nlPosition = buffer.PositionOf((byte)'\n');
+        line = default;
+        var searchBuffer = buffer;
+        SequencePosition? endOfLastLine = null;
 
-        if (nlPosition == null)
+        while (true)
         {
-            line = default;
+            // Look for the next newline character.
+            SequencePosition? nlPosition = searchBuffer.PositionOf((byte)'\n');
+
+            // If no more newlines are found, we're done searching.
+            if (nlPosition == null)
+            {
+                break;
+            }
+
+            // Check for the preceding '\r' to ensure it's a valid CRLF.
+            var crPosition = searchBuffer.GetPosition(-1, nlPosition.Value);
+            var crSlice = searchBuffer.Slice(crPosition, 1);
+            if (crSlice.First.Span[0] != (byte)'\r')
+            {
+                // Not a valid \r\n. Stop here, as the block of valid lines has ended.
+                break;
+            }
+
+            // We found a valid line. Mark its end position and continue searching
+            // from the character after the '\n'.
+            endOfLastLine = searchBuffer.GetPosition(1, nlPosition.Value);
+            searchBuffer = searchBuffer.Slice(endOfLastLine.Value);
+        }
+
+        // If endOfLastLine is null, it means we never found a single complete line.
+        if (endOfLastLine == null)
+        {
             return false;
         }
 
-        // Check if there's a \r immediately before the \n
-        // Check if we have enough data before the \n position for \r\n
-        var beforeN = buffer.Slice(0, nlPosition.Value);
-        if (beforeN.Length == 0)
-        {
-            // \n is at the very beginning, no \r possible
-            line = default;
-            return false;
-        }
+        // We found at least one line. The block is from the start of the original
+        // buffer to the end of the last valid line we found.
+        var totalOffset = buffer.Slice(0, endOfLastLine.Value);
+        line = buffer.Slice(0, totalOffset.Length);
+        buffer = buffer.Slice(totalOffset.Length);
         
-        // Check the last byte before \n to see if it's \r
-        var lastByte = beforeN.Slice(beforeN.Length - 1, 1).First.Span[0];
-        if (lastByte != (byte)'\r')
-        {
-            // No \r before \n, this is not a valid CRLF line ending
-            line = default;
-            return false;
-        }
-
-        // Include the line + the \r\n in the extracted line.
-        line = buffer.Slice(0, buffer.GetPosition(1, nlPosition.Value));
-        buffer = buffer.Slice(buffer.GetPosition(1, nlPosition.Value));
         return true;
     }
 

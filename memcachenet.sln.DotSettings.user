@@ -9,12 +9,17 @@
 	<s:String x:Key="/Default/CodeInspection/ExcludedFiles/FilesAndFoldersToSkip2/=7020124F_002D9FFC_002D4AC3_002D8F3D_002DAAB8E0240759_002Ff_003ATCPClient_002Ecs_002Fl_003AC_0021_003FUsers_003Fguill_003FAppData_003FRoaming_003FJetBrains_003FRider2025_002E2_003Fresharper_002Dhost_003FSourcesCache_003F212760d42b6ac7f5778e2cb7bd6eec0eb5edc15575b9775855c7a77f8363_003FTCPClient_002Ecs/@EntryIndexedValue">ForceIncluded</s:String>
 	<s:String x:Key="/Default/CodeInspection/ExcludedFiles/FilesAndFoldersToSkip2/=7020124F_002D9FFC_002D4AC3_002D8F3D_002DAAB8E0240759_002Ff_003AThrowHelper_002Ecs_002Fl_003AC_0021_003FUsers_003Fguill_003FAppData_003FRoaming_003FJetBrains_003FRider2025_002E2_003Fresharper_002Dhost_003FSourcesCache_003Fc7102cd0ffb8973777e61b1942c3fffac7e14016a511d055c3adf73ff91748_003FThrowHelper_002Ecs/@EntryIndexedValue">ForceIncluded</s:String>
 	<s:String x:Key="/Default/CodeInspection/ExcludedFiles/FilesAndFoldersToSkip2/=7020124F_002D9FFC_002D4AC3_002D8F3D_002DAAB8E0240759_002Ff_003AUtf8Parser_002EBoolean_002Ecs_002Fl_003AC_0021_003FUsers_003Fguill_003FAppData_003FRoaming_003FJetBrains_003FRider2025_002E2_003Fresharper_002Dhost_003FSourcesCache_003F2d89603af7f3fc4cb481e6796a561e6ee0bb3b6dde7427196e08e45cbc3d9c0_003FUtf8Parser_002EBoolean_002Ecs/@EntryIndexedValue">ForceIncluded</s:String>
-	<s:String x:Key="/Default/dotCover/Editor/HighlightingSourceSnapshotLocation/@EntryValue">C:\Users\guill\AppData\Local\JetBrains\Rider2025.2\resharper-host\temp\Rider\vAny\CoverageData\_memcachenet.1323732122\Snapshot\snapshot.utdcvr</s:String>
-	<s:String x:Key="/Default/Environment/UnitTesting/UnitTestSessionStore/Sessions/=6bfcaba8_002D82b2_002D443c_002D92ed_002Db84f561b5550/@EntryIndexedValue">&lt;SessionState ContinuousTestingMode="0" IsActive="True" Name="MemCacheConnectionHandlerTests" xmlns="urn:schemas-jetbrains-com:jetbrains-ut-session"&gt;&#xD;
-  &lt;TestAncestor&gt;&#xD;
-    &lt;TestId&gt;NUnit3x::211F32CE-4CD5-4E2B-98A9-A21BE365A772::net9.0::MemCacheNetTests.MemCacheConnectionHandlerTests&lt;/TestId&gt;&#xD;
-    &lt;TestId&gt;NUnit3x::211F32CE-4CD5-4E2B-98A9-A21BE365A772::net9.0::MemCacheNetTests.MemCacheCommandParserTests+ParseCommandTests.ParseCommand_GetCommand_ReturnsGetCommand&lt;/TestId&gt;&#xD;
-  &lt;/TestAncestor&gt;&#xD;
+	
+	<s:String x:Key="/Default/Environment/UnitTesting/UnitTestSessionStore/Sessions/=0cc6798e_002D0303_002D4281_002D999d_002Dc925c1b8d551/@EntryIndexedValue">&lt;SessionState ContinuousTestingMode="0" IsActive="True" Name="CreateMemeCacheEntry_ShouldSucceed" xmlns="urn:schemas-jetbrains-com:jetbrains-ut-session"&gt;
+  &lt;TestAncestor&gt;
+    &lt;TestId&gt;NUnit3x::3D03A037-3F21-47C8-9ABA-31A9BA7BA1CC::net9.0::CreateTests.CreateMemeCacheEntry_ShouldSucceed&lt;/TestId&gt;
+  &lt;/TestAncestor&gt;
+&lt;/SessionState&gt;</s:String>
+	<s:String x:Key="/Default/Environment/UnitTesting/UnitTestSessionStore/Sessions/=6bfcaba8_002D82b2_002D443c_002D92ed_002Db84f561b5550/@EntryIndexedValue">&lt;SessionState ContinuousTestingMode="0" IsActive="True" Name="MemCacheConnectionHandlerTests" xmlns="urn:schemas-jetbrains-com:jetbrains-ut-session"&gt;
+  &lt;TestAncestor&gt;
+    &lt;TestId&gt;NUnit3x::211F32CE-4CD5-4E2B-98A9-A21BE365A772::net9.0::MemCacheNetTests.MemCacheConnectionHandlerTests&lt;/TestId&gt;
+    &lt;TestId&gt;NUnit3x::211F32CE-4CD5-4E2B-98A9-A21BE365A772::net9.0::MemCacheNetTests.MemCacheCommandParserTests+ParseCommandTests.ParseCommand_GetCommand_ReturnsGetCommand&lt;/TestId&gt;
+  &lt;/TestAncestor&gt;
 &lt;/SessionState&gt;</s:String>
 	
 	
