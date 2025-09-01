@@ -212,7 +212,7 @@ public class MemCache : IMemCache
         if (_cache.TryGetValue(key, out var item))
         {
             // Check the expiration date
-            if (item.Expiration > DateTime.Now)
+            if (item.Expiration < DateTime.Now)
             {
                 _evictionPolicyManager.Delete(key);
                 _cache.Remove(key, out _);

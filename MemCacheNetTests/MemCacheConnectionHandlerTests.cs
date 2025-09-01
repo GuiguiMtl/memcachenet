@@ -292,16 +292,23 @@ public class MemCacheConnectionHandlerTests
                     if (command.StartsWith("set"))
                     {
                         response = Encoding.UTF8.GetBytes("STORED\r\n");
+                        await writeResponse(response);
                     }
                     else if (command.StartsWith("get"))
                     {
                         response = Encoding.UTF8.GetBytes("END\r\n");
+                        await writeResponse(response);
+                    }
+                    else if (command == "hello")
+                    {
+                        // This is the data part of the SET command, don't send a response
+                        return;
                     }
                     else
                     {
                         response = Encoding.UTF8.GetBytes("ERROR\r\n");
+                        await writeResponse(response);
                     }
-                    await writeResponse(response);
                 });
             await connectionHandler.HandleConnectionAsync();
         });
