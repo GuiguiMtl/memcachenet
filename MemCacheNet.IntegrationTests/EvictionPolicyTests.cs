@@ -8,13 +8,15 @@ namespace MemCacheNet.IntegrationTests;
 /// Integration tests for cache eviction policy behavior.
 /// Tests the LRU (Least Recently Used) eviction policy implementation.
 /// </summary>
-public class EvictionPolicyTests : IntegrationTestBase
+public class EvictionPolicyTests
 {
-    public EvictionPolicyTests() : base(11214) // Use different port to avoid conflicts
+public int TestPort = 11211;
+
+    public EvictionPolicyTests()  // Use different port to avoid conflicts
     {
     }
     
-    protected override int GetMaxKeys() => 5; // Small limit to trigger eviction quickly
+    // protected override int GetMaxKeys() => 5; // Small limit to trigger eviction quickly
 
     [Fact]
     public async Task LruEviction_ShouldEvictLeastRecentlyUsedKey()

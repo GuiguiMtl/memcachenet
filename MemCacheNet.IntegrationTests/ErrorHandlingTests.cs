@@ -7,9 +7,11 @@ namespace MemCacheNet.IntegrationTests;
 /// <summary>
 /// Integration tests for error handling and edge cases in the MemCache server.
 /// </summary>
-public class ErrorHandlingTests : IntegrationTestBase
+public class ErrorHandlingTests
 {
-    public ErrorHandlingTests() : base(11216) // Use different port to avoid conflicts
+    public int TestPort = 11211;
+
+    public ErrorHandlingTests()
     {
     }
 

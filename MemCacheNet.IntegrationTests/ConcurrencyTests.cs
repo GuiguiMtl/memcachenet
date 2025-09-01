@@ -7,14 +7,16 @@ namespace MemCacheNet.IntegrationTests;
 /// <summary>
 /// Integration tests for concurrent client connections and thread safety.
 /// </summary>
-public class ConcurrencyTests : IntegrationTestBase
+// public class ConcurrencyTests : IntegrationTestBase
+public class ConcurrencyTests 
 {
-    public ConcurrencyTests() : base(11213) // Use different port to avoid conflicts
+    public int TestPort = 11211;
+    public ConcurrencyTests()
     {
     }
     
-    protected override int GetMaxKeys() => 1000;
-    protected override int GetMaxConnections() => 50;
+    // protected override int GetMaxKeys() => 1000;
+    // protected override int GetMaxConnections() => 50;
 
     [Fact]
     public async Task MultipleConcurrentClients_ShouldAllBeAbleToSetAndGet()

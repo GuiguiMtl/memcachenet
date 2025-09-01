@@ -8,10 +8,11 @@ namespace MemCacheNet.IntegrationTests;
 /// Integration tests for the MemCache server protocol implementation.
 /// Tests the complete stack including TCP communication, command parsing, and response formatting.
 /// </summary>
-public class MemCacheProtocolTests : IntegrationTestBase
+public class MemCacheProtocolTests
 {
-    public MemCacheProtocolTests() : base(11212) // Use different port to avoid conflicts
-    {
+        public int TestPort = 11211;
+
+    public MemCacheProtocolTests(){
     }
 
     [Fact]

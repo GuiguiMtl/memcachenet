@@ -8,15 +8,17 @@ namespace MemCacheNet.IntegrationTests;
 /// Integration tests for server limits and constraints as specified in assignment requirements.
 /// Tests key size limits, value size limits, max keys, and total size constraints.
 /// </summary>
-public class ServerLimitsTests : IntegrationTestBase
+public class ServerLimitsTests
 {
-    public ServerLimitsTests() : base(11215) // Use different port to avoid conflicts
+    public int TestPort = 11211;
+
+    public ServerLimitsTests()
     {
     }
     
-    protected override int GetMaxKeys() => 10; // Small number for easier testing
-    protected override int GetMaxDataSize() => 1024; // 1KB for easier testing (assignment: 100KB)
-    protected override int GetMaxKeySize() => 50; // Smaller for testing (assignment: 250 bytes)
+    // protected override int GetMaxKeys() => 10; // Small number for easier testing
+    // protected override int GetMaxDataSize() => 1024; // 1KB for easier testing (assignment: 100KB)
+    // protected override int GetMaxKeySize() => 50; // Smaller for testing (assignment: 250 bytes)
 
     [Fact]
     public async Task SetWithOversizedKey_ShouldRejectCommand()
