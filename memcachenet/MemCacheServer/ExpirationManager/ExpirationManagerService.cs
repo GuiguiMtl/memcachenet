@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace memcachenet.MemCacheServer;
 
@@ -21,15 +22,14 @@ public class ExpirationManagerService : IHostedService
     /// <summary>
     /// Initializes a new instance of the <see cref="ExpirationManagerService"/> class.
     /// </summary>
-    /// <param name="memCache">The cache instance used to delete expired keys.</param>
-    /// <param name="delayBetweenExecution">The delay between consecutive scans, expressed in seconds.
+    /// <param name="memCacheServer">The mem cache server that contains the instance of the mem cache.</param>
+    /// <param name="settings">The settings of the expiration manager service.
     /// </param>
-    /// <param name="numberOfKeysToDelete">The maximum number of expired keys to delete per scan.</param>
-    public ExpirationManagerService(IMemCache memCache, int delayBetweenExecution, int numberOfKeysToDelete)
+    public ExpirationManagerService(MemCacheServer memCacheServer, IOptions<ExpirationManagerSettings> settings)
     {
-        _memCache = memCache;
-        _numberOfKeysToDelete = numberOfKeysToDelete;
-        _timer = new PeriodicTimer(TimeSpan.FromSeconds(delayBetweenExecution));
+        _memCache = memCacheServer.MemCache;
+        _numberOfKeysToDelete = settings.Value.NumberOfKeysToDelete;
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(settings.Value.DelayBetweenExecutionSeconds));
     }
 
     /// <summary>

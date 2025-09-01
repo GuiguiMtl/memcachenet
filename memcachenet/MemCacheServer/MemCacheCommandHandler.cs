@@ -1,17 +1,39 @@
 namespace memcachenet.MemCacheServer;
 
+/// <summary>
+/// Defines a generic interface for handling MemCache commands.
+/// </summary>
+/// <typeparam name="TMemCacheCommand">The type of command to handle, must implement IMemCacheCommand.</typeparam>
+/// <typeparam name="TMemCacheResponse">The type of response returned after handling the command.</typeparam>
 public interface IMemCacheCommandHandler<in TMemCacheCommand, TMemCacheResponse> where TMemCacheCommand : IMemCacheCommand
 {
+    /// <summary>
+    /// Handles the specified MemCache command asynchronously.
+    /// </summary>
+    /// <param name="command">The command to handle.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains the command response.</returns>
     Task<TMemCacheResponse> HandleCommandAsync(TMemCacheCommand command);
 }
 
+/// <summary>
+/// Provides implementations for handling various MemCache commands including GET, SET, DELETE, and invalid commands.
+/// </summary>
+/// <param name="memCache">The MemCache instance used to perform cache operations.</param>
 public class MemCacheCommandHandler(IMemCache memCache) : IMemCacheCommandHandler<GetMemCacheCommand, GetMemCacheCommandResponse>,
     IMemCacheCommandHandler<SetMemCacheCommand, SetMemCacheCommandResponse>,
     IMemCacheCommandHandler<DeleteMemCacheCommand, DeleteMemeCacheCommandReponse>, 
     IMemCacheCommandHandler<InvalidMemCacheCommand, InvalidMemCacheCommandReponse> 
 {
+    /// <summary>
+    /// The MemCache instance used for cache operations.
+    /// </summary>
     private readonly IMemCache memCache = memCache;
 
+    /// <summary>
+    /// Handles a GET command to retrieve values from the cache for the specified keys.
+    /// </summary>
+    /// <param name="command">The GET command containing the keys to retrieve.</param>
+    /// <returns>A response containing the retrieved cache values for existing keys.</returns>
     public async Task<GetMemCacheCommandResponse> HandleCommandAsync(GetMemCacheCommand command)
     {
         List<MemCacheValue> values = new();
@@ -36,6 +58,11 @@ public class MemCacheCommandHandler(IMemCache memCache) : IMemCacheCommandHandle
         };
     }
 
+    /// <summary>
+    /// Handles a SET command to store a key-value pair in the cache.
+    /// </summary>
+    /// <param name="command">The SET command containing the key, data, and flags to store.</param>
+    /// <returns>A response indicating whether the SET operation was successful or failed due to cache size limits.</returns>
     public async Task<SetMemCacheCommandResponse> HandleCommandAsync(SetMemCacheCommand command)
     {
         if (!await memCache.SetAsync(command.Key, command.Data, command.Flags))
@@ -53,6 +80,11 @@ public class MemCacheCommandHandler(IMemCache memCache) : IMemCacheCommandHandle
         };
     }
 
+    /// <summary>
+    /// Handles a DELETE command to remove a key-value pair from the cache.
+    /// </summary>
+    /// <param name="command">The DELETE command containing the key to remove.</param>
+    /// <returns>A response indicating whether the DELETE operation was successful.</returns>
     public async Task<DeleteMemeCacheCommandReponse> HandleCommandAsync(DeleteMemCacheCommand command)
     {
         var success = await memCache.DeleteAsync(command.Key);
@@ -62,6 +94,11 @@ public class MemCacheCommandHandler(IMemCache memCache) : IMemCacheCommandHandle
         };
     }
 
+    /// <summary>
+    /// Handles an invalid command that could not be recognized or parsed.
+    /// </summary>
+    /// <param name="command">The invalid command that was received.</param>
+    /// <returns>A response indicating the command was invalid with an error message.</returns>
     public Task<InvalidMemCacheCommandReponse> HandleCommandAsync(InvalidMemCacheCommand command)
     {
         return Task.FromResult(new InvalidMemCacheCommandReponse

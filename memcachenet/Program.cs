@@ -10,14 +10,17 @@ class Program
     {
         var builder = Host.CreateApplicationBuilder(args);
 
-        // Register your server as a singleton service and a hosted service
+        builder.Services.Configure<MemCacheServerSettings>(builder.Configuration.GetSection("MemCacheServerSettings"));
+        builder.Services.Configure<ExpirationManagerSettings>(builder.Configuration.GetSection("ExpirationManagerSettings"));
+        
+
         builder.Services.AddSingleton<MemCacheServer.MemCacheServer>();
         builder.Services.AddSingleton<ExpirationManagerService>();
-
+        builder.Services.AddSingleton<MemCacheCommandParser>();
+                
         builder.Services.AddHostedService(p => p.GetRequiredService<MemCacheServer.MemCacheServer>());
         builder.Services.AddHostedService(p => p.GetRequiredService<ExpirationManagerService>());
         
-
         var app = builder.Build();
 
         // 1. Start the host. This calls StartAsync on all IHostedService instances.
@@ -26,6 +29,7 @@ class Program
         // The server is now running in the background.
 
         // 2. Run the CLI on the main thread.
+        // Here we could handle commands that would be done directly to the mem cache. Out of Scope for this project
         RunCommandLineInterface(app.Services);
 
         // 3. Stop the host gracefully when the CLI exits.

@@ -14,31 +14,44 @@ public class MemCacheServer : IHostedService
     private readonly IMemCache _memCache;
     private readonly MemCacheCommandParser _parser;
     private readonly MemCacheCommandHandler _commandHandler;
-    private readonly ILogger<MemCacheServer> logger;
-    private readonly IOptions<MemCacheServerSettings> memCacheServerSettings;
+    private readonly ILogger<MemCacheServer> _logger;
 
+    /// <summary>
+    /// Constructor for production use with dependency injection.
+    /// </summary>
+    /// <param name="logger">The logger instance.</param>
+    /// <param name="memCacheServerSettings">The server configuration settings.</param>
     public MemCacheServer(ILogger<MemCacheServer> logger,
-        IOptions<MemCacheServerSettings> memCacheServerSettings,
-        MemCacheCommandParser parser)
+        IOptions<MemCacheServerSettings> memCacheServerSettings)
+        : this(memCacheServerSettings.Value, logger)
     {
-        this.logger = logger;
-        this.memCacheServerSettings = memCacheServerSettings;
-        this._parser = parser;
+    }
+
+    /// <summary>
+    /// Constructor for testing purposes that accepts settings directly.
+    /// </summary>
+    /// <param name="settings">The server configuration settings.</param>
+    /// <param name="logger">Optional logger instance, uses null logger if not provided.</param>
+    public MemCacheServer(MemCacheServerSettings settings, ILogger<MemCacheServer>? logger = null)
+    {
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<MemCacheServer>.Instance;
+        _parser = new MemCacheCommandParser(settings.MaxKeySizeBytes, settings.MaxDataSizeBytes);
         _memCache = new MemCacheBuilder()
                             .WithExpirationTime(
-                                TimeSpan.FromSeconds(
-                                    memCacheServerSettings.Value.ExpirationTimeSeconds))
-                            .WithMaxKeys(memCacheServerSettings.Value.MaxKeys)
-                            .WithMaxCacheSize(memCacheServerSettings.Value.MaxKeySizeBytes).Build();
-        this._commandHandler = new MemCacheCommandHandler(_memCache);
-        this._connectionSemaphore = new SemaphoreSlim(memCacheServerSettings.Value.MaxConcurrentConnections);
-        this._listener = new(IPAddress.Any, memCacheServerSettings.Value.Port);
+                                TimeSpan.FromSeconds(settings.ExpirationTimeSeconds))
+                            .WithMaxKeys(settings.MaxKeys)
+                            .WithMaxCacheSize(settings.MaxKeySizeBytes).Build();
+        _commandHandler = new MemCacheCommandHandler(_memCache);
+        _connectionSemaphore = new SemaphoreSlim(settings.MaxConcurrentConnections);
+        _listener = new(IPAddress.Any, settings.Port);
     }
+
+    public IMemCache MemCache => _memCache;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _listener.Start();
-        logger.LogInformation("Server started on port 11211.");
+        _logger.LogInformation("Server started on port 11211.");
 
         Task.Run(() => AcceptClientsAsync(cancellationToken), cancellationToken);
 
@@ -60,14 +73,14 @@ public class MemCacheServer : IHostedService
             catch (OperationCanceledException)
             {
                 // This is expected when the host is shutting down.
-                logger.LogInformation("Cancellation requested. Stopping listener.");
+                _logger.LogInformation("Cancellation requested. Stopping listener.");
             }
         }
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
-        logger.LogInformation("Stopping server.");
+        _logger.LogInformation("Stopping server.");
         _listener.Stop();
         return Task.CompletedTask;
     }

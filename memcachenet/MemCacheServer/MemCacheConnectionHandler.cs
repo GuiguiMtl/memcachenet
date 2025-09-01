@@ -5,24 +5,30 @@ using System.Text;
 
 namespace memcachenet.MemCacheServer;
 
-public class MemCacheConnectionHandler : IDisposable
+/// <summary>
+/// Handles TCP client connections for the MemCache server, managing data reading and writing using pipelines.
+/// </summary>
+/// <param name="client">The TCP client connection to handle.</param>
+/// <param name="onLineRead">Callback invoked when a complete line is read from the client, with a response writer function.</param>
+public class MemCacheConnectionHandler(
+    TcpClient client,
+    Action<ReadOnlySequence<byte>, Func<byte[], Task>>? onLineRead)
+    : IDisposable
 {
-    private readonly TcpClient _client;
-    private readonly Action<ReadOnlySequence<byte>, Func<byte[], Task>>? onLineRead;
+    /// <summary>
+    /// The TCP client connection being handled.
+    /// </summary>
+    private readonly TcpClient _client = client ?? throw new ArgumentNullException(nameof(client));
+    
+    /// <summary>
+    /// The network stream for reading from and writing to the client.
+    /// </summary>
     private NetworkStream? _stream;
 
-    public MemCacheConnectionHandler(TcpClient client,
-    Action<ReadOnlySequence<byte>, Func<byte[], Task>>? onLineRead)
-    {
-        if (client == null)
-        {
-            throw new ArgumentNullException(nameof(client));
-        }
-        
-        _client = client;
-        this.onLineRead = onLineRead;
-    }
-
+    /// <summary>
+    /// Handles the client connection asynchronously by setting up reading and writing pipelines.
+    /// </summary>
+    /// <returns>A task representing the asynchronous connection handling operation.</returns>
     public async Task HandleConnectionAsync()
     {
         _stream = _client.GetStream();
@@ -33,6 +39,12 @@ public class MemCacheConnectionHandler : IDisposable
         await Task.WhenAll(reading, writing);
     }
 
+    /// <summary>
+    /// Continuously reads data from the network stream and writes it to the pipe writer.
+    /// </summary>
+    /// <param name="stream">The network stream to read from.</param>
+    /// <param name="writer">The pipe writer to write data to.</param>
+    /// <returns>A task representing the asynchronous fill operation.</returns>
     private async Task FillPipeAsync(NetworkStream stream, PipeWriter writer)
     {
         const int minimumBufferSize = 512;
@@ -70,6 +82,11 @@ public class MemCacheConnectionHandler : IDisposable
         await writer.CompleteAsync();
     }
 
+    /// <summary>
+    /// Continuously reads data from the pipe reader and processes complete lines.
+    /// </summary>
+    /// <param name="reader">The pipe reader to read from.</param>
+    /// <returns>A task representing the asynchronous read operation.</returns>
     private async Task ReadPipeAsync(PipeReader reader)
     {
         while (true)
@@ -97,6 +114,12 @@ public class MemCacheConnectionHandler : IDisposable
         await reader.CompleteAsync();
     }
     
+    /// <summary>
+    /// Attempts to read a complete line ending with CRLF (\r\n) from the buffer.
+    /// </summary>
+    /// <param name="buffer">The buffer to read from, modified to exclude the processed line.</param>
+    /// <param name="line">The output line including the CRLF terminator.</param>
+    /// <returns>True if a complete line was found; otherwise, false.</returns>
     bool TryReadLine(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> line)
     {
         // Look for \r\n in the buffer (memcache protocol requires CRLF).
@@ -133,6 +156,11 @@ public class MemCacheConnectionHandler : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Writes a response back to the client asynchronously.
+    /// </summary>
+    /// <param name="response">The response data to send to the client.</param>
+    /// <returns>A task representing the asynchronous write operation.</returns>
     public async Task WriteResponseAsync(byte[] response)
     {
         if (_stream != null && response.Length > 0)
@@ -142,6 +170,9 @@ public class MemCacheConnectionHandler : IDisposable
         }
     }
 
+    /// <summary>
+    /// Disposes of the TCP client connection and releases associated resources.
+    /// </summary>
     public void Dispose()
     {
         _client.Dispose();
