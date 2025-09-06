@@ -499,7 +499,7 @@ public class MemCacheConnectionHandler(
     /// <returns>A task representing the asynchronous write operation.</returns>
     public async Task WriteResponseAsync(byte[] response)
     {
-        if (_stream != null && response.Length > 0)
+        if (_stream != null && response.Length > 0 && this._client.Connected)
         {
             await _stream.WriteAsync(response);
             await _stream.FlushAsync();
