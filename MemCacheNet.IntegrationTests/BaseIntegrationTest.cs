@@ -28,6 +28,7 @@ public abstract class BaseIntegrationTest : IDisposable
 
         var buffer = new byte[4096];
         var bytesRead = await _stream.ReadAsync(buffer);
+        // If bytesRead is 0, the connection was closed by the server
         return Encoding.UTF8.GetString(buffer, 0, bytesRead);
     }
 

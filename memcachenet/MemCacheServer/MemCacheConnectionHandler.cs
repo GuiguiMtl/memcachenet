@@ -12,9 +12,11 @@ namespace memcachenet.MemCacheServer;
 /// </summary>
 /// <param name="client">The TCP client connection to handle.</param>
 /// <param name="onLineRead">Callback invoked when a complete line is read from the client, with a response writer function.</param>
+/// <param name="settings">Server settings including timeout configuration.</param>
 public class MemCacheConnectionHandler(
     TcpClient client,
     Action<ReadOnlySequence<byte>, Func<byte[], Task>>? onLineRead,
+    MemCacheServerSettings settings,
     ILogger<MemCacheConnectionHandler>? logger = null)
     : IDisposable
 {
@@ -27,6 +29,11 @@ public class MemCacheConnectionHandler(
     /// Logger for debugging connection handling.
     /// </summary>
     private readonly ILogger<MemCacheConnectionHandler>? _logger = logger;
+
+    /// <summary>
+    /// Server settings including timeout configuration.
+    /// </summary>
+    private readonly MemCacheServerSettings _settings = settings ?? throw new ArgumentNullException(nameof(settings));
     
     /// <summary>
     /// The network stream for reading from and writing to the client.
@@ -39,34 +46,71 @@ public class MemCacheConnectionHandler(
     private readonly string _connectionId = Guid.NewGuid().ToString("N")[..8];
 
     /// <summary>
+    /// Cancellation token source for connection timeouts.
+    /// </summary>
+    private readonly CancellationTokenSource _connectionCts = new();
+
+    /// <summary>
+    /// Timer for tracking idle connection timeout.
+    /// </summary>
+    private Timer? _idleTimer;
+
+    /// <summary>
+    /// Lock for thread-safe timer operations.
+    /// </summary>
+    private readonly object _timerLock = new();
+
+    /// <summary>
     /// Handles the client connection asynchronously by setting up reading and writing pipelines.
     /// </summary>
     /// <returns>A task representing the asynchronous connection handling operation.</returns>
     public async Task HandleConnectionAsync(CancellationToken token)
     {
+        // Combine external cancellation token with connection timeout token
+        using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(token, _connectionCts.Token);
+        var combinedToken = combinedCts.Token;
+
         try
         {
             _logger?.LogDebug("Starting connection handling for {ConnectionId} from {ClientEndpoint}", 
                 _connectionId, _client.Client.RemoteEndPoint?.ToString() ?? "unknown");
                 
             _stream = _client.GetStream();
-            var pipe = new Pipe();
-            Task writing = FillPipeAsync(token, _stream, pipe.Writer);
-            Task reading = ReadPipeAsync(token, pipe.Reader);
             
-            await Task.WhenAll(reading, writing);
-            if (token.IsCancellationRequested)
+            // Initialize idle timer if timeout is configured
+            if (_settings.ConnectionIdleTimeoutSeconds > 0)
             {
-                _logger?.LogInformation("Connection {ConnectionId} cancelled", _connectionId);
-                _client.Close();
+                StartIdleTimer();
             }
             
+            var pipe = new Pipe();
+            Task writing = FillPipeAsync(combinedToken, _stream, pipe.Writer);
+            Task reading = ReadPipeAsync(combinedToken, pipe.Reader);
+            
+            await Task.WhenAll(reading, writing);
+            
             _logger?.LogDebug("Connection handling completed for {ConnectionId}", _connectionId);
+        }
+        catch (OperationCanceledException) when (combinedToken.IsCancellationRequested)
+        {
+            if (_connectionCts.Token.IsCancellationRequested && !token.IsCancellationRequested)
+            {
+                _logger?.LogInformation("Connection {ConnectionId} timed out", _connectionId);
+            }
+            else
+            {
+                _logger?.LogInformation("Connection {ConnectionId} cancelled", _connectionId);
+            }
         }
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Error handling connection {ConnectionId}: {ErrorMessage}", _connectionId, ex.Message);
             throw;
+        }
+        finally
+        {
+            StopIdleTimer();
+            _client.Close();
         }
     }
 
@@ -91,7 +135,7 @@ public class MemCacheConnectionHandler(
                 // Allocate at least 512 bytes from the PipeWriter.
                 Memory<byte> memory = writer.GetMemory(minimumBufferSize);
                 
-                int bytesRead = await stream.ReadAsync(memory);
+                int bytesRead = await stream.ReadAsync(memory, token);
                 if (bytesRead == 0)
                 {
                     break;
@@ -140,7 +184,30 @@ public class MemCacheConnectionHandler(
             
             while (true && !token.IsCancellationRequested)
             {
-                ReadResult result = await reader.ReadAsync();
+                ReadResult result;
+                
+                // Apply read timeout for incomplete commands if configured
+                if (_settings.ReadTimeoutSeconds > 0)
+                {
+                    using var readTimeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(_settings.ReadTimeoutSeconds));
+                    using var combinedReadCts = CancellationTokenSource.CreateLinkedTokenSource(token, readTimeoutCts.Token);
+                    
+                    try
+                    {
+                        result = await reader.ReadAsync(combinedReadCts.Token);
+                    }
+                    catch (OperationCanceledException) when (readTimeoutCts.Token.IsCancellationRequested && !token.IsCancellationRequested)
+                    {
+                        _logger?.LogWarning("Read timeout reached for connection {ConnectionId}", _connectionId);
+                        _connectionCts.Cancel(); // Trigger connection timeout
+                        throw;
+                    }
+                }
+                else
+                {
+                    result = await reader.ReadAsync(token);
+                }
+                
                 ReadOnlySequence<byte> buffer = result.Buffer;
 
                 while (TryReadMemCacheCommand(ref buffer, out ReadOnlySequence<byte> command))
@@ -152,6 +219,9 @@ public class MemCacheConnectionHandler(
                     
                     _logger?.LogDebug("Processing command {CommandNumber} for connection {ConnectionId}, size: {CommandSize} bytes", 
                         commandCount, _connectionId, command.Length);
+                    
+                    // Reset idle timer when command is received
+                    ResetIdleTimer();
                     
                     // invoke the callback when a command is read
                     onLineRead?.Invoke(command, WriteResponseAsync);
@@ -437,10 +507,66 @@ public class MemCacheConnectionHandler(
     }
 
     /// <summary>
+    /// Starts the idle timer if connection idle timeout is configured.
+    /// </summary>
+    private void StartIdleTimer()
+    {
+        lock (_timerLock)
+        {
+            if (_settings.ConnectionIdleTimeoutSeconds > 0)
+            {
+                var timeoutMs = _settings.ConnectionIdleTimeoutSeconds * 1000;
+                _idleTimer = new Timer(OnIdleTimeout, null, timeoutMs, Timeout.Infinite);
+                _logger?.LogTrace("Started idle timer for connection {ConnectionId} with {TimeoutSeconds}s timeout", 
+                    _connectionId, _settings.ConnectionIdleTimeoutSeconds);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Resets the idle timer when activity is detected.
+    /// </summary>
+    private void ResetIdleTimer()
+    {
+        lock (_timerLock)
+        {
+            if (_idleTimer != null && _settings.ConnectionIdleTimeoutSeconds > 0)
+            {
+                var timeoutMs = _settings.ConnectionIdleTimeoutSeconds * 1000;
+                _idleTimer.Change(timeoutMs, Timeout.Infinite);
+                _logger?.LogTrace("Reset idle timer for connection {ConnectionId}", _connectionId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Stops the idle timer.
+    /// </summary>
+    private void StopIdleTimer()
+    {
+        lock (_timerLock)
+        {
+            _idleTimer?.Dispose();
+            _idleTimer = null;
+        }
+    }
+
+    /// <summary>
+    /// Callback invoked when the idle timer expires.
+    /// </summary>
+    private void OnIdleTimeout(object? state)
+    {
+        _logger?.LogInformation("Connection {ConnectionId} idle timeout reached, closing connection", _connectionId);
+        _connectionCts.Cancel();
+    }
+
+    /// <summary>
     /// Disposes of the TCP client connection and releases associated resources.
     /// </summary>
     public void Dispose()
     {
+        StopIdleTimer();
+        _connectionCts.Dispose();
         _client.Dispose();
     }
 }

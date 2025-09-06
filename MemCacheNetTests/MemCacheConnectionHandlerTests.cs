@@ -12,12 +12,18 @@ public class MemCacheConnectionHandlerTests
 {
     private List<string> _capturedLines;
     private TcpClient _mockClient;
+    private MemCacheServerSettings _testSettings;
 
     [SetUp]
     public void SetUp()
     {
         _capturedLines = [];
         _mockClient = new TcpClient();
+        _testSettings = new MemCacheServerSettings
+        {
+            ConnectionIdleTimeoutSeconds = 0, // Disabled for tests
+            ReadTimeoutSeconds = 5 // Short timeout for tests
+        };
     }
 
     [TearDown]
@@ -86,7 +92,8 @@ public class MemCacheConnectionHandlerTests
             
             using var connectionHandler = new MemCacheConnectionHandler(
                 client, 
-                withCallback ? OnLineReadCallback : null
+                withCallback ? OnLineReadCallback : null,
+                _testSettings
             );
             
             var connectionTask = connectionHandler.HandleConnectionAsync(CancellationToken.None);
@@ -309,7 +316,8 @@ public class MemCacheConnectionHandlerTests
                         response = Encoding.UTF8.GetBytes("ERROR\r\n");
                         await writeResponse(response);
                     }
-                });
+                },
+                _testSettings);
             await connectionHandler.HandleConnectionAsync(CancellationToken.None);
         });
         

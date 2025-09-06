@@ -46,4 +46,18 @@ public class MemCacheServerSettings
     /// </summary>
     /// <value>The default maximum is 1073741824 bytes (1GB).</value>
     public int MaxTotalCacheSizeBytes { get; set; } = 1073741824; // 1 GB
+
+    /// <summary>
+    /// Gets or sets the idle connection timeout in seconds.
+    /// Connections that are idle for longer than this period will be closed.
+    /// </summary>
+    /// <value>The default is 0 seconds, which disables idle timeout.</value>
+    public int ConnectionIdleTimeoutSeconds { get; set; } = 0; // 0 = disabled
+
+    /// <summary>
+    /// Gets or sets the read timeout in seconds for incomplete commands.
+    /// If a command is not completed within this time, the connection will be closed.
+    /// </summary>
+    /// <value>The default is 30 seconds.</value>
+    public int ReadTimeoutSeconds { get; set; } = 30;
 }

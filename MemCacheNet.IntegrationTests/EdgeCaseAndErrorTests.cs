@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace MemCacheNet.IntegrationTests;
 
 public class EdgeCaseAndErrorTests : BaseIntegrationTest
@@ -216,26 +218,6 @@ public class EdgeCaseAndErrorTests : BaseIntegrationTest
     }
 
     [Fact]
-    public async Task Commands_WithoutProperCRLF_ShouldHandleGracefully()
-    {
-        // Arrange
-        await ConnectAsync();
-        var commandWithoutCRLF = "get test"; // Missing \r\n
-
-        // Act & Assert - This might timeout or handle gracefully depending on implementation
-        try
-        {
-            var response = await SendCommandAsync(commandWithoutCRLF);
-            // If we get a response, it should be an error
-            response.Should().MatchRegex("ERROR|CLIENT_ERROR");
-        }
-        catch (Exception)
-        {
-            // Timeouts or connection issues are acceptable for malformed commands
-        }
-    }
-
-    [Fact]
     public async Task SetCommand_WithOnlyCR_ShouldHandleGracefully()
     {
         // Arrange
@@ -375,5 +357,24 @@ public class EdgeCaseAndErrorTests : BaseIntegrationTest
         setResponse.Should().Contain("STORED");
         getResponse.Should().Contain($"VALUE {key} 0 {value.Length}");
         getResponse.Should().Contain(value);
+    }
+
+    [Fact]
+    public async Task Commands_WithoutProperCRLF_ShouldTimeoutGracefully()
+    {
+        // Arrange
+        await ConnectAsync();
+        var incompleteCommand = "get test"; // Missing \r\n
+
+        // Act - Send incomplete command and measure response time
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var response = await SendCommandAsync(incompleteCommand);
+        stopwatch.Stop();
+        
+        // Assert - Server should close connection (empty response) within timeout period
+        // The server has ReadTimeoutSeconds = 5, so should close quickly
+        response.Should().BeEmpty("Server should close connection due to incomplete command");
+        stopwatch.ElapsedMilliseconds.Should().BeLessThan(10000, "Should timeout within reasonable time");
+        stopwatch.ElapsedMilliseconds.Should().BeGreaterThan(4000, "Should wait for configured timeout period");
     }
 }

@@ -82,6 +82,7 @@ public class MemCacheServer : IHostedService
                 var connectionHandler = new MemCacheConnectionHandler(
                     tcpClient, 
                     (line, writeResponse) => OnCommandLineRead(line, writeResponse, connectionId),
+                    _settings,
                     connectionHandlerLogger);
                 
                 // Start connection session span and handle connection asynchronously
