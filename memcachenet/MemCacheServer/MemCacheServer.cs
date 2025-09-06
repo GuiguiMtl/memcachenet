@@ -18,6 +18,7 @@ public class MemCacheServer : IHostedService
     private readonly ILogger<MemCacheServer> _logger;
     private readonly MemCacheServerSettings _settings;
     private readonly ILoggerFactory? _loggerFactory;
+    private readonly CancellationTokenSource _serverCancellationTokenSource = new();
 
     /// <summary>
     /// Constructor for production use with dependency injection.
@@ -59,7 +60,7 @@ public class MemCacheServer : IHostedService
         _listener.Start();
         _logger.LogInformation("MemCache server started on port {Port}", _settings.Port);
 
-        Task.Run(() => AcceptClientsAsync(cancellationToken), cancellationToken);
+        Task.Run(() => AcceptClientsAsync(_serverCancellationTokenSource.Token), cancellationToken);
 
         return Task.CompletedTask;
     }
@@ -92,7 +93,7 @@ public class MemCacheServer : IHostedService
                     
                     try
                     {
-                        await connectionHandler.HandleConnectionAsync();
+                        await connectionHandler.HandleConnectionAsync(_serverCancellationTokenSource.Token);
                     }
                     catch (Exception ex)
                     {
@@ -124,6 +125,8 @@ public class MemCacheServer : IHostedService
     {
         _logger.LogInformation("Stopping MemCache server on port {Port}", _settings.Port);
         _listener.Stop();
+        _serverCancellationTokenSource.Cancel();
+        _serverCancellationTokenSource.Dispose();
         return Task.CompletedTask;
     }
 

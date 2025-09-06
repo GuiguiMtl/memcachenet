@@ -93,14 +93,11 @@ class Program
             // 1. Start the host. This calls StartAsync on all IHostedService instances.
             await app.StartAsync();
 
-            // The server is now running in the background.
-
-            // 2. Run the CLI on the main thread.
-            // Here we could handle commands that would be done directly to the mem cache. Out of Scope for this project
-            RunCommandLineInterface(app.Services);
-
-            // 3. Stop the host gracefully when the CLI exits.
-            await app.StopAsync();
+            // 2. Keep the application running until Ctrl+C is pressed
+            Console.WriteLine("Server started. Press Ctrl+C to stop.");
+            await app.WaitForShutdownAsync();
+            
+            Console.WriteLine("Shutting down...");
         }
         catch (Exception e)
         {
@@ -108,25 +105,38 @@ class Program
         }
     }
     
-    private static void RunCommandLineInterface(IServiceProvider services)
+    private static void RunCommandLineInterface(IServiceProvider services, CancellationToken cancellationToken)
     {
         // Retrieve the running server instance from the DI container
         var server = services.GetRequiredService<MemCacheServer.MemCacheServer>();
 
-        Console.WriteLine("Server is running. Type 'stats' or 'exit'.");
+        Console.WriteLine("Server is running. Type 'stats' or 'exit', or press Ctrl+C to stop.");
     
         // This CLI loop is almost identical to the previous version
-        while (true)
+        while (!cancellationToken.IsCancellationRequested)
         {
             Console.Write("> ");
+            
+            // Check for cancellation before blocking on ReadLine
+            if (cancellationToken.IsCancellationRequested)
+            {
+                Console.WriteLine("\nShutdown requested...");
+                break;
+            }
+            
             string input = Console.ReadLine();
-            if (input == "exit") break;
+            if (string.IsNullOrEmpty(input) || input == "exit") break;
             if (input == "stats")
             {
                 // We can now call public methods on our server instance
                 // Note: GetStatsAsync should be updated to work in this context
                 Console.WriteLine("Fetching stats...");
             }
+        }
+        
+        if (cancellationToken.IsCancellationRequested)
+        {
+            Console.WriteLine("Shutting down server...");
         }
     }
 }

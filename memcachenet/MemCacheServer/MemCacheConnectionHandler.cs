@@ -42,7 +42,7 @@ public class MemCacheConnectionHandler(
     /// Handles the client connection asynchronously by setting up reading and writing pipelines.
     /// </summary>
     /// <returns>A task representing the asynchronous connection handling operation.</returns>
-    public async Task HandleConnectionAsync()
+    public async Task HandleConnectionAsync(CancellationToken token)
     {
         try
         {
@@ -51,10 +51,15 @@ public class MemCacheConnectionHandler(
                 
             _stream = _client.GetStream();
             var pipe = new Pipe();
-            Task writing = FillPipeAsync(_stream, pipe.Writer);
-            Task reading = ReadPipeAsync(pipe.Reader);
+            Task writing = FillPipeAsync(token, _stream, pipe.Writer);
+            Task reading = ReadPipeAsync(token, pipe.Reader);
             
             await Task.WhenAll(reading, writing);
+            if (token.IsCancellationRequested)
+            {
+                _logger?.LogInformation("Connection {ConnectionId} cancelled", _connectionId);
+                _client.Close();
+            }
             
             _logger?.LogDebug("Connection handling completed for {ConnectionId}", _connectionId);
         }
@@ -71,7 +76,7 @@ public class MemCacheConnectionHandler(
     /// <param name="stream">The network stream to read from.</param>
     /// <param name="writer">The pipe writer to write data to.</param>
     /// <returns>A task representing the asynchronous fill operation.</returns>
-    private async Task FillPipeAsync(NetworkStream stream, PipeWriter writer)
+    private async Task FillPipeAsync(CancellationToken token, NetworkStream stream, PipeWriter writer)
     {
         using var activity = MemCacheTelemetry.ActivitySource.StartActivity(MemCacheTelemetry.ActivityNames.PipelineFill);
         activity?.SetTag(MemCacheTelemetry.Tags.ConnectionId, _connectionId);
@@ -81,7 +86,7 @@ public class MemCacheConnectionHandler(
 
         try
         {
-            while (true)
+            while (true && !token.IsCancellationRequested)
             {
                 // Allocate at least 512 bytes from the PipeWriter.
                 Memory<byte> memory = writer.GetMemory(minimumBufferSize);
@@ -122,7 +127,7 @@ public class MemCacheConnectionHandler(
     /// </summary>
     /// <param name="reader">The pipe reader to read from.</param>
     /// <returns>A task representing the asynchronous read operation.</returns>
-    private async Task ReadPipeAsync(PipeReader reader)
+    private async Task ReadPipeAsync(CancellationToken token, PipeReader reader)
     {
         using var activity = MemCacheTelemetry.ActivitySource.StartActivity(MemCacheTelemetry.ActivityNames.PipelineRead);
         activity?.SetTag(MemCacheTelemetry.Tags.ConnectionId, _connectionId);
@@ -133,7 +138,7 @@ public class MemCacheConnectionHandler(
         {
             _logger?.LogTrace("Starting to read pipe for connection {ConnectionId}", _connectionId);
             
-            while (true)
+            while (true && !token.IsCancellationRequested)
             {
                 ReadResult result = await reader.ReadAsync();
                 ReadOnlySequence<byte> buffer = result.Buffer;
