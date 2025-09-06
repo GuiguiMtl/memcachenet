@@ -85,7 +85,7 @@ public static class ResponseFormatter
     /// <returns>A byte array containing the formatted VALUE line followed by data and CRLF terminator.</returns>
     private static byte[] FormatMemCacheItem(MemCacheValue value)
     {
-        var byteHeader = Encoding.UTF8.GetBytes($"VALUE ${value.Key} ${value.Flags} ${value.Bytes} \r\n");
+        var byteHeader = Encoding.UTF8.GetBytes($"VALUE {value.Key} {value.Flags} {value.Bytes}\r\n");
         var byteLineEnding = Encoding.UTF8.GetBytes("\r\n");
         // Initialize an array for the resopnse of the size of the header + the data + 2 for the final \r\n line ending
         byte[] bytesResponse = new byte[byteHeader.Length + value.Bytes + 2];

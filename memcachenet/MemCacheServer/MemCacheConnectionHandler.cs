@@ -1,7 +1,9 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Net.Sockets;
 using System.Text;
+using Microsoft.Extensions.Logging;
 
 namespace memcachenet.MemCacheServer;
 
@@ -12,7 +14,8 @@ namespace memcachenet.MemCacheServer;
 /// <param name="onLineRead">Callback invoked when a complete line is read from the client, with a response writer function.</param>
 public class MemCacheConnectionHandler(
     TcpClient client,
-    Action<ReadOnlySequence<byte>, Func<byte[], Task>>? onLineRead)
+    Action<ReadOnlySequence<byte>, Func<byte[], Task>>? onLineRead,
+    ILogger<MemCacheConnectionHandler>? logger = null)
     : IDisposable
 {
     /// <summary>
@@ -21,9 +24,19 @@ public class MemCacheConnectionHandler(
     private readonly TcpClient _client = client ?? throw new ArgumentNullException(nameof(client));
     
     /// <summary>
+    /// Logger for debugging connection handling.
+    /// </summary>
+    private readonly ILogger<MemCacheConnectionHandler>? _logger = logger;
+    
+    /// <summary>
     /// The network stream for reading from and writing to the client.
     /// </summary>
     private NetworkStream? _stream;
+    
+    /// <summary>
+    /// Connection identifier for tracing purposes.
+    /// </summary>
+    private readonly string _connectionId = Guid.NewGuid().ToString("N")[..8];
 
     /// <summary>
     /// Handles the client connection asynchronously by setting up reading and writing pipelines.
@@ -31,12 +44,25 @@ public class MemCacheConnectionHandler(
     /// <returns>A task representing the asynchronous connection handling operation.</returns>
     public async Task HandleConnectionAsync()
     {
-        _stream = _client.GetStream();
-        var pipe = new Pipe();
-        Task writing = FillPipeAsync(_stream, pipe.Writer);
-        Task reading = ReadPipeAsync(pipe.Reader);
-        
-        await Task.WhenAll(reading, writing);
+        try
+        {
+            _logger?.LogDebug("Starting connection handling for {ConnectionId} from {ClientEndpoint}", 
+                _connectionId, _client.Client.RemoteEndPoint?.ToString() ?? "unknown");
+                
+            _stream = _client.GetStream();
+            var pipe = new Pipe();
+            Task writing = FillPipeAsync(_stream, pipe.Writer);
+            Task reading = ReadPipeAsync(pipe.Reader);
+            
+            await Task.WhenAll(reading, writing);
+            
+            _logger?.LogDebug("Connection handling completed for {ConnectionId}", _connectionId);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Error handling connection {ConnectionId}: {ErrorMessage}", _connectionId, ex.Message);
+            throw;
+        }
     }
 
     /// <summary>
@@ -47,39 +73,48 @@ public class MemCacheConnectionHandler(
     /// <returns>A task representing the asynchronous fill operation.</returns>
     private async Task FillPipeAsync(NetworkStream stream, PipeWriter writer)
     {
+        using var activity = MemCacheTelemetry.ActivitySource.StartActivity(MemCacheTelemetry.ActivityNames.PipelineFill);
+        activity?.SetTag(MemCacheTelemetry.Tags.ConnectionId, _connectionId);
+        
         const int minimumBufferSize = 512;
+        var totalBytesRead = 0;
 
-        while (true)
+        try
         {
-            // Allocate at least 512 bytes from the PipeWriter.
-            Memory<byte> memory = writer.GetMemory(minimumBufferSize);
-            try
+            while (true)
             {
+                // Allocate at least 512 bytes from the PipeWriter.
+                Memory<byte> memory = writer.GetMemory(minimumBufferSize);
+                
                 int bytesRead = await stream.ReadAsync(memory);
                 if (bytesRead == 0)
                 {
                     break;
                 }
-                // Tell the PipeWriter how much was read from the Socket.
+                
+                totalBytesRead += bytesRead;
                 writer.Advance(bytesRead);
-            }
-            catch (Exception ex)
-            {
-                // TODO log
-                break;
-            }
 
-            // Make the data available to the PipeReader.
-            FlushResult result = await writer.FlushAsync();
+                // Make the data available to the PipeReader.
+                FlushResult result = await writer.FlushAsync();
 
-            if (result.IsCompleted)
-            {
-                break;
+                if (result.IsCompleted)
+                {
+                    break;
+                }
             }
         }
-
-        // By completing PipeWriter, tell the PipeReader that there's no more data coming.
-        await writer.CompleteAsync();
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.SetTag(MemCacheTelemetry.Tags.ErrorType, ex.GetType().Name);
+        }
+        finally
+        {
+            activity?.SetTag(MemCacheTelemetry.Tags.DataSize, totalBytesRead);
+            // By completing PipeWriter, tell the PipeReader that there's no more data coming.
+            await writer.CompleteAsync();
+        }
     }
 
     /// <summary>
@@ -89,29 +124,58 @@ public class MemCacheConnectionHandler(
     /// <returns>A task representing the asynchronous read operation.</returns>
     private async Task ReadPipeAsync(PipeReader reader)
     {
-        while (true)
+        using var activity = MemCacheTelemetry.ActivitySource.StartActivity(MemCacheTelemetry.ActivityNames.PipelineRead);
+        activity?.SetTag(MemCacheTelemetry.Tags.ConnectionId, _connectionId);
+        
+        var commandCount = 0;
+        
+        try
         {
-            ReadResult result = await reader.ReadAsync();
-            ReadOnlySequence<byte> buffer = result.Buffer;
-
-            while (TryReadMemCacheCommand(ref buffer, out ReadOnlySequence<byte> command))
+            _logger?.LogTrace("Starting to read pipe for connection {ConnectionId}", _connectionId);
+            
+            while (true)
             {
-                // invoke the callback when a command is read
-                onLineRead?.Invoke(command, WriteResponseAsync);
-            }
+                ReadResult result = await reader.ReadAsync();
+                ReadOnlySequence<byte> buffer = result.Buffer;
 
-            // Tell the PipeReader how much of the buffer has been consumed.
-            reader.AdvanceTo(buffer.Start, buffer.End);
+                while (TryReadMemCacheCommand(ref buffer, out ReadOnlySequence<byte> command))
+                {
+                    commandCount++;
+                    using var commandActivity = MemCacheTelemetry.ActivitySource.StartActivity(MemCacheTelemetry.ActivityNames.CommandRead);
+                    commandActivity?.SetTag(MemCacheTelemetry.Tags.ConnectionId, _connectionId);
+                    commandActivity?.SetTag(MemCacheTelemetry.Tags.DataSize, command.Length);
+                    
+                    _logger?.LogDebug("Processing command {CommandNumber} for connection {ConnectionId}, size: {CommandSize} bytes", 
+                        commandCount, _connectionId, command.Length);
+                    
+                    // invoke the callback when a command is read
+                    onLineRead?.Invoke(command, WriteResponseAsync);
+                }
 
-            // Stop reading if there's no more data coming.
-            if (result.IsCompleted)
-            {
-                break;
+                // Tell the PipeReader how much of the buffer has been consumed.
+                reader.AdvanceTo(buffer.Start, buffer.End);
+
+                // Stop reading if there's no more data coming.
+                if (result.IsCompleted)
+                {
+                    _logger?.LogTrace("Pipe read completed for connection {ConnectionId}", _connectionId);
+                    break;
+                }
             }
         }
-
-        // Mark the PipeReader as complete.
-        await reader.CompleteAsync();
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Error reading pipe for connection {ConnectionId}: {ErrorMessage}", _connectionId, ex.Message);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.SetTag(MemCacheTelemetry.Tags.ErrorType, ex.GetType().Name);
+        }
+        finally
+        {
+            _logger?.LogDebug("Finished processing {CommandCount} commands for connection {ConnectionId}", commandCount, _connectionId);
+            activity?.SetTag("memcache.commands.processed", commandCount);
+            // Mark the PipeReader as complete.
+            await reader.CompleteAsync();
+        }
     }
     
     /// <summary>

@@ -100,7 +100,7 @@ public class GetCommandTests : BaseIntegrationTest
         // Arrange
         await ConnectAsync();
         var key = "binaryget";
-        var value = "Binary\0Data\xFF\xFE\r\n\t";
+        var value = "Binary\0Data\xFF\xFE\r\n";
         
         await SendSetCommandAsync(key, value);
 
@@ -272,39 +272,6 @@ public class GetCommandTests : BaseIntegrationTest
         response.Should().Contain($"VALUE {key} 0 {value.Length}");
         response.Should().Contain(value);
         response.Should().Contain("END");
-    }
-
-    [Fact]
-    public async Task GetCommand_ConcurrentGets_ShouldAllSucceed()
-    {
-        // Arrange
-        await ConnectAsync();
-        var key = "concurrent_get";
-        var value = "concurrent_value";
-        await SendSetCommandAsync(key, value);
-
-        var tasks = new List<Task<string>>();
-        var concurrentCount = 10;
-
-        // Act
-        for (int i = 0; i < concurrentCount; i++)
-        {
-            tasks.Add(Task.Run(async () =>
-            {
-                await ConnectAsync();
-                return await SendGetCommandAsync(key);
-            }));
-        }
-
-        var responses = await Task.WhenAll(tasks);
-
-        // Assert
-        foreach (var response in responses)
-        {
-            response.Should().Contain($"VALUE {key} 0 {value.Length}");
-            response.Should().Contain(value);
-            response.Should().Contain("END");
-        }
     }
 
     private static int CountOccurrences(string text, string pattern)

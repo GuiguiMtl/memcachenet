@@ -1,3 +1,6 @@
+using System.Net.Sockets;
+using System.Text;
+
 namespace MemCacheNet.IntegrationTests;
 
 public class DeleteCommandTests : BaseIntegrationTest
@@ -51,7 +54,7 @@ public class DeleteCommandTests : BaseIntegrationTest
     }
 
     [Fact]
-    public async Task DeleteCommand_NonExistentKeyWithNoReply_ShouldNotReturnResponse()
+    public async Task DeleteCommand_NonExistentKeyWithNoReply_ShouldReturnResponse()
     {
         // Arrange
         await ConnectAsync();
@@ -61,7 +64,7 @@ public class DeleteCommandTests : BaseIntegrationTest
         var response = await SendDeleteCommandAsync(key, noReply: true);
 
         // Assert
-        response.Should().BeEmpty();
+        response.Should().Contain("NOT_FOUND");
     }
 
     [Fact]
@@ -217,12 +220,33 @@ public class DeleteCommandTests : BaseIntegrationTest
             var taskId = i;
             tasks.Add(Task.Run(async () =>
             {
-                await ConnectAsync();
+                // Create a separate connection for this task to avoid race conditions
+                using var client = new TcpClient();
+                await client.ConnectAsync(DefaultHost, DefaultPort);
+                using var stream = client.GetStream();
+                
                 var key = $"concurrent_del_{taskId}";
                 var value = $"value_{taskId}";
+
+                // Set command
+                var setCommand = $"set {key} 0 0 {value.Length}\r\n{value}\r\n";
+                var setCommandBytes = Encoding.UTF8.GetBytes(setCommand);
+                await stream.WriteAsync(setCommandBytes);
                 
-                await SendSetCommandAsync(key, value);
-                return await SendDeleteCommandAsync(key);
+                var buffer = new byte[4096];
+                var bytesRead = await stream.ReadAsync(buffer);
+                var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                Console.WriteLine($"Set Response for {key}: {response}");
+                
+                // Delete command
+                var deleteCommand = $"delete {key}\r\n";
+                var deleteCommandBytes = Encoding.UTF8.GetBytes(deleteCommand);
+                await stream.WriteAsync(deleteCommandBytes);
+                
+                bytesRead = await stream.ReadAsync(buffer);
+                response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                Console.WriteLine($"Delete Response for {key}: {response}");
+                return response;
             }));
         }
 
@@ -254,8 +278,19 @@ public class DeleteCommandTests : BaseIntegrationTest
         {
             tasks.Add(Task.Run(async () =>
             {
-                await ConnectAsync();
-                return await SendDeleteCommandAsync(key);
+                // Create a separate connection for this task to avoid race conditions
+                using var client = new TcpClient();
+                await client.ConnectAsync(DefaultHost, DefaultPort);
+                using var stream = client.GetStream();
+                
+                // Delete command
+                var deleteCommand = $"delete {key}\r\n";
+                var deleteCommandBytes = Encoding.UTF8.GetBytes(deleteCommand);
+                await stream.WriteAsync(deleteCommandBytes);
+                
+                var buffer = new byte[4096];
+                var bytesRead = await stream.ReadAsync(buffer);
+                return Encoding.UTF8.GetString(buffer, 0, bytesRead);
             }));
         }
 

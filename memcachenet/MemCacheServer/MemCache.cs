@@ -163,25 +163,36 @@ public class MemCache : IMemCache
     /// <param name="Flags">Opaque client flags to persist with the value.</param>
     public async Task<bool> SetAsync(string key, byte[] value, uint Flags)
     {
-        if (_cacheSize + value.Length > _maxCacheSize)
-        {
-            return false;
-        }
         // lock so it can safely do the operation
         await _cacheLock.WaitAsync();
-
-        // Check if we reached the max number of keys
-        if (_cache.Count == _maxKeys)
-        {
-            // Find the key to be removed based on the expiration policy
-            // Remove the key
-            var keyToRemove = _evictionPolicyManager.KeyToRemove();
-            _evictionPolicyManager.Delete(keyToRemove);
-            _cache.Remove(keyToRemove, out _);
-        }
-
+        
         try
         {
+            // Check cache size limit
+            if (_cacheSize + value.Length > _maxCacheSize)
+            {
+                return false;
+            }
+
+            // Check if we reached the max number of keys
+            if (_cache.Count >= _maxKeys && !_cache.ContainsKey(key))
+            {
+                // Find the key to be removed based on the eviction policy
+                var keyToRemove = _evictionPolicyManager.KeyToRemove();
+                if (_cache.Remove(keyToRemove, out var removedItem))
+                {
+                    _evictionPolicyManager.Delete(keyToRemove);
+                    _cacheSize -= removedItem.Value.Length;
+                }
+            }
+
+            // If updating existing key, subtract old value size
+            if (_cache.TryGetValue(key, out var existingItem))
+            {
+                _cacheSize -= existingItem.Value.Length;
+                _evictionPolicyManager.Delete(key);
+            }
+
             _cache[key] = new MemCacheItem
             {
                 Value = value,
@@ -209,29 +220,35 @@ public class MemCache : IMemCache
     /// <returns>The stored value bytes, or an empty array if the key is not found.</returns>
     public async Task<MemCacheItem?> TryGetAsync(string key)
     {
-        if (_cache.TryGetValue(key, out var item))
+        await _cacheLock.WaitAsync();
+        try
         {
-            // Check the expiration date
-            if (item.Expiration < DateTime.Now)
+            if (_cache.TryGetValue(key, out var item))
             {
-                _evictionPolicyManager.Delete(key);
-                _cache.Remove(key, out _);
-                return null;
-            }
-            await _cacheLock.WaitAsync();
-            try
-            {
+                // Check the expiration date
+                if (item.Expiration < DateTime.Now)
+                {
+                    // Key is expired, remove it
+                    _cache.Remove(key, out var removedItem);
+                    if (removedItem != null)
+                    {
+                        _cacheSize -= removedItem.Value.Length;
+                    }
+                    _evictionPolicyManager.Delete(key);
+                    return null;
+                }
+                
+                // Key is valid, update access tracking
                 _evictionPolicyManager.Get(key);
-            }
-            finally
-            {
-                _cacheLock.Release();
+                return item;
             }
             
-            return item;
+            return null;
         }
-        
-        return null;
+        finally
+        {
+            _cacheLock.Release();
+        }
     }
 
     /// <summary>
@@ -266,16 +283,34 @@ public class MemCache : IMemCache
     public async Task DeleteExpiredKeysAsync(int sampleSize = 20)
     {
         // Take a random sample of keys to check
-        var keysToCheck = _cache.Keys.OrderBy(k => Guid.NewGuid()).Take(sampleSize);
+        var keysToCheck = _cache.Keys.OrderBy(k => Guid.NewGuid()).Take(sampleSize).ToList();
+        var keysToDelete = new List<string>();
 
-        foreach (var key in keysToCheck)
+        await _cacheLock.WaitAsync();
+        try
         {
-            // Check if the key was not already deleted and if it is expired
-            if (_cache.TryGetValue(key, out var item) && item.Expiration < DateTime.Now)
+            // Check which keys are expired while holding the lock
+            foreach (var key in keysToCheck)
             {
-                // Key is expired, delete it
-                await DeleteAsync(key);
+                if (_cache.TryGetValue(key, out var item) && item.Expiration < DateTime.Now)
+                {
+                    keysToDelete.Add(key);
+                }
             }
+
+            // Delete expired keys in the same lock
+            foreach (var key in keysToDelete)
+            {
+                if (_cache.Remove(key, out var item))
+                {
+                    _evictionPolicyManager.Delete(key);
+                    _cacheSize -= item.Value.Length;
+                }
+            }
+        }
+        finally
+        {
+            _cacheLock.Release();
         }
     }
 }
