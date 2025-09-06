@@ -150,16 +150,36 @@ public class DeleteMemCacheCommand : NoReplyCacheCommand, IMemCacheCommand
 /// <summary>
 /// Represents an invalid or unrecognized command that could not be parsed.
 /// </summary>
-/// <param name="errorMessage">The error message describing why the command is invalid.</param>
-public class InvalidMemCacheCommand(string errorMessage) : IMemCacheCommand
+public class InvalidMemCacheCommand : IMemCacheCommand
 {
+    private readonly CommandValidationResult _validationResult;
+    
     /// <summary>
-    /// Handles the invalid command by returning a CLIENT_ERROR response.
+    /// Creates an invalid command with a specific validation result.
+    /// </summary>
+    /// <param name="validationResult">The validation result describing why the command is invalid.</param>
+    public InvalidMemCacheCommand(CommandValidationResult validationResult)
+    {
+        _validationResult = validationResult;
+    }
+    
+    /// <summary>
+    /// Creates an invalid command with a simple error message (legacy support).
+    /// </summary>
+    /// <param name="errorMessage">The error message describing why the command is invalid.</param>
+    public InvalidMemCacheCommand(string errorMessage)
+    {
+        _validationResult = CommandValidationResult.Failure(ValidationErrorType.UnknownCommand, errorMessage);
+    }
+
+    /// <summary>
+    /// Handles the invalid command by returning the appropriate protocol error response.
     /// </summary>
     /// <param name="handler">The command handler (not used for invalid commands).</param>
-    /// <returns>A task containing the CLIENT_ERROR response bytes.</returns>
+    /// <returns>A task containing the formatted error response bytes.</returns>
     public Task<byte[]> HandleAsync(MemCacheCommandHandler handler)
     {
-        return Task.FromResult(Encoding.UTF8.GetBytes($"CLIENT_ERROR {errorMessage}"));
+        var response = $"{_validationResult.ProtocolResponse}\r\n";
+        return Task.FromResult(Encoding.UTF8.GetBytes(response));
     }
 }

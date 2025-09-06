@@ -62,7 +62,7 @@ public class GetCommandTests : BaseIntegrationTest
         await ConnectAsync();
         var key = "flagtest";
         var value = "flagvalue";
-        var flags = 456;
+        uint flags = 456;
         
         await SendSetCommandAsync(key, value, flags);
 

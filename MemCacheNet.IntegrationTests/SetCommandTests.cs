@@ -87,7 +87,7 @@ public class SetCommandTests : BaseIntegrationTest
         await ConnectAsync();
         var key = "flaggedkey";
         var value = "flaggedvalue";
-        var flags = 123;
+        var flags = (uint)123;
 
         // Act
         var response = await SendSetCommandAsync(key, value, flags);

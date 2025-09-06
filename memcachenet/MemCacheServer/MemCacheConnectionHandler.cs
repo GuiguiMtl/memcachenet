@@ -234,12 +234,28 @@ public class MemCacheConnectionHandler(
         var dataLength = ExtractDataLengthFromSetCommand(commandLine);
         if (dataLength < 0)
         {
-            return false; // Invalid SET command format
+            // Invalid data length - pass the command line to parser for proper error handling
+            command = buffer.Slice(0, reader.Position);
+            buffer = buffer.Slice(reader.Position);
+            return true;
         }
         
         // Check if we have enough data for the complete command (data + \r\n)
         if (reader.Remaining < dataLength + 2)
         {
+            // Check if we have any data block that ends with \r\n
+            // This handles cases where declared length doesn't match actual data
+            var remainingBuffer = reader.UnreadSequence;
+            var tempReader = new SequenceReader<byte>(remainingBuffer);
+            if (tempReader.TryReadTo(out ReadOnlySequence<byte> _, new byte[] { (byte)'\r', (byte)'\n' }))
+            {
+                // We found a \r\n, so pass this malformed command to parser for proper error handling
+                var totalConsumed = reader.Consumed + tempReader.Consumed;
+                command = buffer.Slice(0, totalConsumed);
+                buffer = buffer.Slice(totalConsumed);
+                return true;
+            }
+            
             return false; // Not enough data available yet
         }
         

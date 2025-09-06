@@ -31,9 +31,10 @@ public abstract class BaseIntegrationTest : IDisposable
         return Encoding.UTF8.GetString(buffer, 0, bytesRead);
     }
 
-    protected async Task<string> SendSetCommandAsync(string key, string value, int flags = 0, int expiration = 0)
+    protected async Task<string> SendSetCommandAsync(string key, string value, uint flags = 0, int expiration = 0)
     {
-        var setCommand = $"set {key} {flags} {expiration} {value.Length}\r\n{value}\r\n";
+        var valueBytes = Encoding.UTF8.GetByteCount(value);
+        var setCommand = $"set {key} {flags} {expiration} {valueBytes}\r\n{value}\r\n";
         return await SendCommandAsync(setCommand);
     }
 

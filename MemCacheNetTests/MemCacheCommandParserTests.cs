@@ -63,7 +63,7 @@ public class MemCacheCommandParserTests
         [Test]
         public void ParseCommand_SetCommand_ReturnsSetCommand()
         {
-            var buffer = CreateBuffer("set key1 0 0 4\r\ndata");
+            var buffer = CreateBuffer("set key1 0 0 4\r\ndata\r\n");
             
             var result = _parser.ParseCommand(buffer);
             
@@ -300,7 +300,7 @@ public class MemCacheCommandParserTests
         public void HandleSetCommand_MaxDataSize_ReturnsValidCommand()
         {
             var maxData = new string('a', MaxDataSize);
-            var buffer = CreateBuffer($"set key1 0 0 {MaxDataSize}\r\n{maxData}");
+            var buffer = CreateBuffer($"set key1 0 0 {MaxDataSize}\r\n{maxData}\r\n");
             
             var result = _parser.ParseCommand(buffer) as SetMemCacheCommand;
             
@@ -311,7 +311,7 @@ public class MemCacheCommandParserTests
         [Test]
         public void HandleSetCommand_EmptyData_ReturnsValidCommand()
         {
-            var buffer = CreateBuffer("set key1 0 0 0\r\n");
+            var buffer = CreateBuffer("set key1 0 0 0\r\n\r\n");
             
             var result = _parser.ParseCommand(buffer) as SetMemCacheCommand;
             
@@ -323,7 +323,7 @@ public class MemCacheCommandParserTests
         public void HandleSetCommand_ZeroFlag_ReturnsValidCommand()
         {
             var data = "test";
-            var buffer = CreateBuffer($"set key1 0 0 {data.Length}\r\n{data}");
+            var buffer = CreateBuffer($"set key1 0 0 {data.Length}\r\n{data}\r\n");
             
             var result = _parser.ParseCommand(buffer) as SetMemCacheCommand;
             
@@ -377,7 +377,7 @@ public class MemCacheCommandParserTests
         public void HandleSetCommand_LargeValidFlag_ReturnsValidCommand()
         {
             var data = "test";
-            var buffer = CreateBuffer($"set key1 4294967295 0 {data.Length}\r\n{data}");
+            var buffer = CreateBuffer($"set key1 4294967295 0 {data.Length}\r\n{data}\r\n");
             
             var result = _parser.ParseCommand(buffer) as SetMemCacheCommand;
             

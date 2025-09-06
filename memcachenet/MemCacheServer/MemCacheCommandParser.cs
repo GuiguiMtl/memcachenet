@@ -27,11 +27,12 @@ public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandPa
         // 1. Read the first word (the command) up to the first space.
         if (!reader.TryReadTo(out ReadOnlySpan<byte> commandSpan, (byte)' '))
         {
-            return new InvalidMemCacheCommand(InvalidCommand);
+            var result = CommandValidationResult.Failure(ValidationErrorType.ProtocolViolation, "invalid command format");
+            return new InvalidMemCacheCommand(result);
         }
 
         var command = Encoding.UTF8.GetString(commandSpan);
-        switch (command)
+        switch (command.ToLowerInvariant())
         {
             case "get":
                 return HandleGetCommand(ref reader);
@@ -40,7 +41,8 @@ public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandPa
             case "delete":
                 return HandleDeleteCommand(reader);
             default:
-                return new InvalidMemCacheCommand(InvalidCommand);
+                var unknownResult = CommandValidationResult.Failure(ValidationErrorType.UnknownCommand, $"unknown command: {command}");
+                return new InvalidMemCacheCommand(unknownResult);
         }
     }
 
@@ -54,7 +56,8 @@ public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandPa
         // Read the parameters line until \r\n
         if (!reader.TryReadTo(out ReadOnlySequence<byte> parametersLine, new byte[] { (byte)'\r', (byte)'\n' }))
         {
-            return new InvalidMemCacheCommand(InvalidCommand);
+            var result = CommandValidationResult.Failure(ValidationErrorType.ProtocolViolation, "missing command termination");
+            return new InvalidMemCacheCommand(result);
         }
 
         var parametersReader = new SequenceReader<byte>(parametersLine);
@@ -62,19 +65,18 @@ public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandPa
         // If we can read up to a space we might have an extra 'noreply' parameter
         if (parametersReader.TryReadTo(out ReadOnlySpan<byte> keySpan, (byte)' '))
         {
-            // Check if the key to delete is not too long
-            if (keySpan.Length > maxKeySize)
+            var key = Encoding.UTF8.GetString(keySpan);
+            var keyValidation = KeyValidator.ValidateKey(key, maxKeySize);
+            if (!keyValidation.IsValid)
             {
-                return new InvalidMemCacheCommand(InvalidCommand);
+                return new InvalidMemCacheCommand(keyValidation);
             }
             
-            var key = Encoding.UTF8.GetString(keySpan);
-            
             var noReplyString = Encoding.UTF8.GetString(parametersReader.UnreadSequence);
-            if (!noReplyString.Equals("noreply"))
+            if (!noReplyString.Equals("noreply", StringComparison.Ordinal))
             {
-                // Invalid last parameter
-                return new InvalidMemCacheCommand(InvalidCommand);
+                var result = CommandValidationResult.Failure(ValidationErrorType.InvalidParameter, $"unknown parameter: {noReplyString}");
+                return new InvalidMemCacheCommand(result);
             }
             
             return new DeleteMemCacheCommand
@@ -84,13 +86,19 @@ public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandPa
             };
         }
 
-        // Check if the key to delete is not too long
-        if (parametersReader.Remaining > maxKeySize)
+        // No space found, entire remaining sequence should be the key
+        if (parametersReader.Remaining == 0)
         {
-            return new InvalidMemCacheCommand(InvalidCommand);
+            var result = CommandValidationResult.Failure(ValidationErrorType.MissingParameter, "missing key parameter");
+            return new InvalidMemCacheCommand(result);
         }
         
         var keyOnly = Encoding.UTF8.GetString(parametersReader.UnreadSequence);
+        var keyOnlyValidation = KeyValidator.ValidateKey(keyOnly, maxKeySize);
+        if (!keyOnlyValidation.IsValid)
+        {
+            return new InvalidMemCacheCommand(keyOnlyValidation);
+        }
 
         return new DeleteMemCacheCommand
         {
@@ -106,118 +114,133 @@ public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandPa
     /// <returns>A SetMemCacheCommand or InvalidMemCacheCommand if parsing fails.</returns>
     private IMemCacheCommand HandleSetCommand(ref SequenceReader<byte> reader)
     {
-        byte[] data;
         // Read the parameters line until \r\n
         if (!reader.TryReadTo(out ReadOnlySequence<byte> parametersLine, new byte[] { (byte)'\r', (byte)'\n' }))
         {
-            return new InvalidMemCacheCommand(InvalidCommand);
+            var result = CommandValidationResult.Failure(ValidationErrorType.ProtocolViolation, "missing command termination");
+            return new InvalidMemCacheCommand(result);
         }
 
         var parametersReader = new SequenceReader<byte>(parametersLine);
         
-        // Get the key name
-        if (!TryGetString(ref parametersReader, out var key))
+        // Parse and validate key
+        if (!parametersReader.TryReadTo(out ReadOnlySpan<byte> keySpan, (byte)' '))
         {
-            return new InvalidMemCacheCommand(InvalidCommand);
-        }            
-        
-        // Validate the key is not empty
-        if(String.IsNullOrWhiteSpace(key))
-        {
-            return new InvalidMemCacheCommand(InvalidCommand);
-        } 
-        
-        // Get the flag
-        if (!TryGetNumeric(ref parametersReader, out uint flag))
-        {
-            return new InvalidMemCacheCommand(InvalidCommand);
+            var result = CommandValidationResult.Failure(ValidationErrorType.MissingParameter, "missing key parameter");
+            return new InvalidMemCacheCommand(result);
         }
         
-        // Get the expiration time
-        if (!TryGetNumeric(ref parametersReader, out uint expirationTime))
+        var key = Encoding.UTF8.GetString(keySpan);
+        var keyValidation = KeyValidator.ValidateKey(key, maxKeySize);
+        if (!keyValidation.IsValid)
         {
-            return new InvalidMemCacheCommand(InvalidCommand);
-        }
-
-        // Get the data length (bytes)
-        if (!TryGetNumeric(ref parametersReader, out int dataLength))
-        {
-            Int32.TryParse(parametersReader.UnreadSpan, null, out dataLength);
-
-            if (dataLength > maxDataSize)
-            {
-                return new InvalidMemCacheCommand(InvalidCommand);
-            }
-            
-            if (!TryReadData(reader, dataLength, out data))
-            {
-                return new InvalidMemCacheCommand(InvalidCommand);
-            }
-            
-            return new SetMemCacheCommand
-            {
-                Key = key,
-                Flags = flag,
-                Expiration = expirationTime,
-                Data = data,
-                NoReply = false
-            };
+            return new InvalidMemCacheCommand(keyValidation);
         }
         
-        // Validate data length
-        if (dataLength < 0 || dataLength > maxDataSize)
+        // Parse and validate flags
+        if (!parametersReader.TryReadTo(out ReadOnlySpan<byte> flagsSpan, (byte)' '))
         {
-            return new InvalidMemCacheCommand(InvalidCommand);
+            var result = CommandValidationResult.Failure(ValidationErrorType.MissingParameter, "missing flags parameter");
+            return new InvalidMemCacheCommand(result);
         }
-
-        // Check for optional noreply parameter
+        
+        var flagsValidation = CommandValidator.TryParseNumericParameter<uint>(flagsSpan, "flags", out uint flags);
+        if (!flagsValidation.IsValid)
+        {
+            return new InvalidMemCacheCommand(flagsValidation);
+        }
+        
+        // Parse and validate expiration
+        if (!parametersReader.TryReadTo(out ReadOnlySpan<byte> expirationSpan, (byte)' '))
+        {
+            var result = CommandValidationResult.Failure(ValidationErrorType.MissingParameter, "missing expiration parameter");
+            return new InvalidMemCacheCommand(result);
+        }
+        
+        var expirationValidation = CommandValidator.TryParseNumericParameter<uint>(expirationSpan, "expiration", out uint expiration);
+        if (!expirationValidation.IsValid)
+        {
+            return new InvalidMemCacheCommand(expirationValidation);
+        }
+        
+        // Parse data length - this might be the last parameter or followed by noreply
+        ReadOnlySpan<byte> dataLengthSpan;
+        bool hasMoreParameters = false;
+        
+        if (parametersReader.TryReadTo(out dataLengthSpan, (byte)' '))
+        {
+            hasMoreParameters = true;
+        }
+        else
+        {
+            // No space found, read to end
+            dataLengthSpan = parametersReader.UnreadSpan;
+        }
+        
+        var dataLengthValidation = CommandValidator.TryParseNumericParameter<int>(dataLengthSpan, "data length", out int dataLength);
+        if (!dataLengthValidation.IsValid)
+        {
+            return new InvalidMemCacheCommand(dataLengthValidation);
+        }
+        
+        // Validate data length bounds
+        var dataLengthBoundsValidation = CommandValidator.ValidateNumericParameter(dataLength, "data length", 0, maxDataSize);
+        if (!dataLengthBoundsValidation.IsValid)
+        {
+            return new InvalidMemCacheCommand(dataLengthBoundsValidation);
+        }
+        
+        // Check for noreply parameter
         bool noReply = false;
-        if (parametersReader.Remaining > 0)
+        if (hasMoreParameters)
         {
             if (parametersReader.TryReadTo(out ReadOnlySpan<byte> noReplySpan, (byte)' '))
             {
                 var noReplyString = Encoding.UTF8.GetString(noReplySpan);
-                if (noReplyString.Equals("noreply"))
+                if (noReplyString.Equals("noreply", StringComparison.Ordinal))
                 {
                     noReply = true;
+                    
+                    // Check if there are more parameters after noreply (which is invalid)
+                    if (parametersReader.Remaining > 0)
+                    {
+                        var result = CommandValidationResult.Failure(ValidationErrorType.InvalidParameter, "unexpected parameters after noreply");
+                        return new InvalidMemCacheCommand(result);
+                    }
                 }
                 else
                 {
-                    return new InvalidMemCacheCommand(InvalidCommand);
-                }
-                
-                // Check if there are more parameters after noreply (which is invalid)
-                if (parametersReader.Remaining > 0)
-                {
-                    return new InvalidMemCacheCommand(InvalidCommand);
+                    var result = CommandValidationResult.Failure(ValidationErrorType.InvalidParameter, $"unknown parameter: {noReplyString}");
+                    return new InvalidMemCacheCommand(result);
                 }
             }
             else
             {
-                // Read the remaining as noreply parameter
+                // Read the remaining as potential noreply parameter
                 var noReplyString = Encoding.UTF8.GetString(parametersReader.UnreadSequence);
-                if (noReplyString.Equals("noreply"))
+                if (noReplyString.Equals("noreply", StringComparison.Ordinal))
                 {
                     noReply = true;
                 }
                 else
                 {
-                    return new InvalidMemCacheCommand(InvalidCommand);
+                    var result = CommandValidationResult.Failure(ValidationErrorType.InvalidParameter, $"unknown parameter: {noReplyString}");
+                    return new InvalidMemCacheCommand(result);
                 }
             }
         }
 
         // Read the data block - it should be exactly dataLength bytes
-        if (!TryReadData(reader, dataLength, out data))
+        if (!TryReadDataWithValidation(reader, dataLength, out byte[] data, out var dataValidation))
         {
-            return new InvalidMemCacheCommand(InvalidCommand);
+            return new InvalidMemCacheCommand(dataValidation);
         }
         
         return new SetMemCacheCommand
         {
             Key = key,
-            Flags = flag,
-            Expiration = expirationTime,
+            Flags = flags,
+            Expiration = expiration,
             Data = data,
             NoReply = noReply
         };
@@ -233,7 +256,8 @@ public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandPa
         // Read the rest of the command until \r\n
         if (!reader.TryReadTo(out ReadOnlySequence<byte> keysLine, new byte[] { (byte)'\r', (byte)'\n' }))
         {
-            return new InvalidMemCacheCommand(InvalidCommand);
+            var result = CommandValidationResult.Failure(ValidationErrorType.ProtocolViolation, "missing command termination");
+            return new InvalidMemCacheCommand(result);
         }
 
         var keysReader = new SequenceReader<byte>(keysLine);
@@ -244,14 +268,15 @@ public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandPa
         {
             if (keysReader.TryReadTo(out ReadOnlySpan<byte> keySpan, (byte)' '))
             {
-                if (keySpan.Length > maxKeySize)
-                {
-                    return new InvalidMemCacheCommand(InvalidCommand);
-                }
-                
                 if (!keySpan.IsEmpty)
                 {
-                    keys.Add(Encoding.UTF8.GetString(keySpan));
+                    var key = Encoding.UTF8.GetString(keySpan);
+                    var keyValidation = KeyValidator.ValidateKey(key, maxKeySize);
+                    if (!keyValidation.IsValid)
+                    {
+                        return new InvalidMemCacheCommand(keyValidation);
+                    }
+                    keys.Add(key);
                 }
             }
             else
@@ -259,20 +284,23 @@ public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandPa
                 // No more spaces, the rest of the sequence is the last key
                 if (keysReader.Remaining > 0)
                 {
-                    var lastKey = keysReader.UnreadSequence;
-                    if (lastKey.Length > maxKeySize)
+                    var lastKey = Encoding.UTF8.GetString(keysReader.UnreadSequence);
+                    var keyValidation = KeyValidator.ValidateKey(lastKey, maxKeySize);
+                    if (!keyValidation.IsValid)
                     {
-                        return new InvalidMemCacheCommand(InvalidCommand);
+                        return new InvalidMemCacheCommand(keyValidation);
                     }
-                    keys.Add(Encoding.UTF8.GetString(lastKey));
+                    keys.Add(lastKey);
                 }
                 break;
             }
         }
 
-        if (keys.Count == 0)
+        // Validate that at least one key was provided
+        var keysValidation = KeyValidator.ValidateKeys(keys, maxKeySize);
+        if (!keysValidation.IsValid)
         {
-            return new InvalidMemCacheCommand(InvalidCommand);
+            return new InvalidMemCacheCommand(keysValidation);
         }
 
         return new GetMemCacheCommand
@@ -308,6 +336,62 @@ public class MemCacheCommandParser(int maxKeySize, int maxDataSize) : ICommandPa
                 reader.Advance(2);
             }
             // Note: We don't fail if \r\n is missing as the protocol allows any bytes in data
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Attempts to read a specific amount of data bytes from the sequence reader with validation.
+    /// </summary>
+    /// <param name="reader">The sequence reader to read from.</param>
+    /// <param name="dataLength">The number of bytes to read.</param>
+    /// <param name="data">The output byte array containing the read data.</param>
+    /// <param name="validationResult">The validation result if reading fails.</param>
+    /// <returns>True if the data was successfully read; otherwise, false.</returns>
+    private bool TryReadDataWithValidation(SequenceReader<byte> reader, int dataLength, out byte[] data, out CommandValidationResult validationResult)
+    {
+        data = [];
+        validationResult = CommandValidationResult.Success();
+        
+        if (reader.Remaining < dataLength)
+        {
+            validationResult = CommandValidationResult.Failure(ValidationErrorType.InvalidData, "insufficient data available");
+            return false;
+        }
+
+        data = reader.UnreadSequence.Slice(0, dataLength).ToArray();
+        reader.Advance(dataLength);
+        
+        // The data block should be followed by \r\n according to protocol
+        if (reader.Remaining >= 2)
+        {
+            var nextBytes = reader.UnreadSequence.Slice(0, 2).ToArray();
+            if (nextBytes[0] == (byte)'\r' && nextBytes[1] == (byte)'\n')
+            {
+                reader.Advance(2);
+            }
+            else
+            {
+                // Check if we have at least \r\n somewhere in the remaining data
+                // This handles cases where there might be more data after this command
+                validationResult = CommandValidationResult.Failure(ValidationErrorType.ProtocolViolation, "data block must end with \\r\\n");
+                return false;
+            }
+        }
+        else
+        {
+            validationResult = CommandValidationResult.Failure(ValidationErrorType.InvalidData, "missing data termination");
+            return false;
+        }
+        
+        // Final validation of actual data length
+        var actualDataLength = data.Length;
+        var dataLengthValidation = CommandValidator.ValidateDataLength(dataLength, actualDataLength, maxDataSize);
+        if (!dataLengthValidation.IsValid)
+        {
+            validationResult = dataLengthValidation;
+            return false;
         }
 
         return true;

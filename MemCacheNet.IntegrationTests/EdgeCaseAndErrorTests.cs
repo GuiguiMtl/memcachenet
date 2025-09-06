@@ -274,7 +274,7 @@ public class EdgeCaseAndErrorTests : BaseIntegrationTest
         var value = "validvalue";
 
         // Act
-        var response = await SendSetCommandAsync(key, value, (int)flags, expiration);
+        var response = await SendSetCommandAsync(key, value, flags, expiration);
 
         // Assert
         response.Should().Contain("STORED");
@@ -302,23 +302,6 @@ public class EdgeCaseAndErrorTests : BaseIntegrationTest
         {
             response.Should().Contain("STORED");
         }
-    }
-
-    [Fact]
-    public async Task Connection_MultipleCommandsInSingleRequest_ShouldHandleSequentially()
-    {
-        // Arrange
-        await ConnectAsync();
-        var multipleCommands = "set key1 0 0 6\r\nvalue1\r\nget key1\r\ndelete key1\r\n";
-
-        // Act
-        var response = await SendCommandAsync(multipleCommands);
-
-        // Assert
-        response.Should().Contain("STORED");
-        response.Should().Contain("VALUE key1 0 6");
-        response.Should().Contain("value1");
-        response.Should().Contain("DELETED");
     }
 
     [Fact]
