@@ -197,6 +197,13 @@ public class MemCacheConnectionHandler(
         var reader = new SequenceReader<byte>(buffer);
         if (!reader.TryReadTo(out ReadOnlySequence<byte> commandLine, new byte[] { (byte)'\r', (byte)'\n' }))
         {
+            // Check if we have data that might be malformed (contains \r or \n but not \r\n)
+            if (TryDetectMalformedCommand(buffer, out command))
+            {
+                // Advance the buffer past the malformed command
+                buffer = buffer.Slice(command.Length);
+                return true; // Return malformed command for error handling
+            }
             return false; // No complete command line found
         }
         
@@ -217,6 +224,63 @@ public class MemCacheConnectionHandler(
         command = commandLineWithCrlf;
         buffer = buffer.Slice(reader.Position);
         return true;
+    }
+
+    /// <summary>
+    /// Detects malformed commands that have improper line endings (\r only or \n only)
+    /// </summary>
+    private bool TryDetectMalformedCommand(ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> command)
+    {
+        command = default;
+        var reader = new SequenceReader<byte>(buffer);
+        
+        // Look for lone \r (not followed by \n)
+        while (reader.TryReadTo(out ReadOnlySequence<byte> lineBeforeCr, (byte)'\r'))
+        {
+            if (reader.End || (reader.IsNext((byte)'\n') == false))
+            {
+                // Found \r not followed by \n - this is malformed
+                var malformedLength = lineBeforeCr.Length + 1; // Include the \r
+                if (reader.Remaining > 0 && !reader.IsNext((byte)'\n'))
+                {
+                    // Include additional content until proper termination or buffer end
+                    var remainingReader = new SequenceReader<byte>(reader.UnreadSequence);
+                    byte nextByte;
+                    while (remainingReader.TryRead(out nextByte) && nextByte != (byte)'\n')
+                    {
+                        malformedLength++;
+                    }
+                    if (remainingReader.Consumed > 0 && nextByte == (byte)'\n') 
+                    {
+                        malformedLength++; // Include the \n if found
+                    }
+                }
+                command = buffer.Slice(0, malformedLength);
+                return true;
+            }
+        }
+        
+        // Reset reader to check for lone \n
+        reader = new SequenceReader<byte>(buffer);
+        
+        // Look for \n not preceded by \r
+        var position = 0L;
+        while (reader.TryRead(out byte currentByte))
+        {
+            if (currentByte == (byte)'\n')
+            {
+                // Check if previous byte was \r
+                if (position == 0 || buffer.Slice(position - 1, 1).FirstSpan[0] != (byte)'\r')
+                {
+                    // Found \n not preceded by \r - this is malformed
+                    command = buffer.Slice(0, position + 1); // Include the \n
+                    return true;
+                }
+            }
+            position++;
+        }
+        
+        return false;
     }
 
     bool TryReadSetCommand(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> command)
