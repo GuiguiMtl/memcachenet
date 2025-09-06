@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using MemCacheLoadTester.Clients;
 using MemCacheLoadTester.Configuration;
+using MemCacheLoadTester.Logging;
 using MemCacheLoadTester.Metrics;
 
 namespace MemCacheLoadTester;
@@ -17,6 +18,7 @@ public class LoadTester
     private readonly KeyGenerator _keyGenerator;
     private readonly ValueGenerator _valueGenerator;
     private readonly WorkloadSelector _workloadSelector;
+    private readonly FileLogger? _logger;
     
     private readonly List<Task> _clientTasks;
     private readonly CancellationTokenSource _cancellationTokenSource;
@@ -34,6 +36,11 @@ public class LoadTester
         _valueGenerator = new ValueGenerator(_config.Values);
         _workloadSelector = new WorkloadSelector(_config.Workload);
         
+        // Initialize file logger if enabled
+        _logger = _config.Reporting.EnableFileLogging 
+            ? new FileLogger(_config.Reporting.LogFilePath) 
+            : null;
+        
         _clientTasks = new List<Task>();
         _cancellationTokenSource = new CancellationTokenSource();
         _rampUpSemaphore = new SemaphoreSlim(0);
@@ -46,11 +53,21 @@ public class LoadTester
     /// </summary>
     public async Task<MetricsSnapshot> RunAsync()
     {
-        Console.WriteLine($"Starting load test with {_config.ConcurrentClients} clients...");
-        Console.WriteLine($"Target: {_config.Host}:{_config.Port}");
-        Console.WriteLine($"Duration: {_config.DurationSeconds}s, Ramp-up: {_config.RampUpSeconds}s");
-        Console.WriteLine($"Workload: {_config.Workload.SetPercentage}% SET, {_config.Workload.GetPercentage}% GET, {_config.Workload.DeletePercentage}% DELETE");
+        var startMessage = $"Starting load test with {_config.ConcurrentClients} clients...";
+        var targetMessage = $"Target: {_config.Host}:{_config.Port}";
+        var durationMessage = $"Duration: {_config.DurationSeconds}s, Ramp-up: {_config.RampUpSeconds}s";
+        var workloadMessage = $"Workload: {_config.Workload.SetPercentage}% SET, {_config.Workload.GetPercentage}% GET, {_config.Workload.DeletePercentage}% DELETE";
+        
+        Console.WriteLine(startMessage);
+        Console.WriteLine(targetMessage);
+        Console.WriteLine(durationMessage);
+        Console.WriteLine(workloadMessage);
         Console.WriteLine();
+
+        _logger?.LogInfo(startMessage);
+        _logger?.LogInfo(targetMessage);
+        _logger?.LogInfo(durationMessage);
+        _logger?.LogInfo(workloadMessage);
 
         try
         {
@@ -93,12 +110,16 @@ public class LoadTester
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error during load test: {ex.Message}");
+            var errorMessage = $"Error during load test: {ex.Message}";
+            Console.WriteLine(errorMessage);
+            _logger?.LogError("Load test failed", ex);
             _cancellationTokenSource.Cancel();
             throw;
         }
         finally
         {
+            _logger?.LogInfo("Load test completed");
+            _logger?.Dispose();
             _rampUpSemaphore.Dispose();
             _cancellationTokenSource.Dispose();
         }
@@ -189,6 +210,7 @@ public class LoadTester
         try
         {
             client = new MemCacheClient(_config.Host, _config.Port);
+            _logger?.LogConnection(clientId, "Connected", $"to {_config.Host}:{_config.Port}");
             
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -215,6 +237,12 @@ public class LoadTester
                 
                 _metrics.RecordOperation(result);
                 
+                // Log failed operations for debugging
+                if (!result.Success)
+                {
+                    _logger?.LogOperation(clientId, result.Operation, false, (long)result.ElapsedMilliseconds, result.Response);
+                }
+                
                 // Small delay to prevent overwhelming the server
                 await Task.Delay(1, cancellationToken);
             }
@@ -222,6 +250,7 @@ public class LoadTester
         catch (OperationCanceledException)
         {
             // Expected when cancellation is requested
+            _logger?.LogConnection(clientId, "Cancelled", "Operation cancelled");
         }
         catch (Exception ex)
         {
@@ -233,10 +262,15 @@ public class LoadTester
                 Operation = "CLIENT_ERROR"
             };
             _metrics.RecordOperation(errorResult);
+            _logger?.LogError($"Client {clientId} error", ex);
         }
         finally
         {
-            client?.Dispose();
+            if (client != null)
+            {
+                _logger?.LogConnection(clientId, "Disconnected", "Closing connection");
+                client.Dispose();
+            }
         }
     }
 

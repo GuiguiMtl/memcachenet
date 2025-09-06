@@ -190,6 +190,16 @@ public class ReportingConfig
     /// Include individual operation results in exports (can be large).
     /// </summary>
     public bool IncludeIndividualResults { get; set; } = false;
+
+    /// <summary>
+    /// Enable logging to file for debugging connection issues.
+    /// </summary>
+    public bool EnableFileLogging { get; set; } = true;
+
+    /// <summary>
+    /// Log file path for connection and error information.
+    /// </summary>
+    public string LogFilePath { get; set; } = "loadtest.log";
 }
 
 /// <summary>

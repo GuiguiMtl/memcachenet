@@ -53,6 +53,7 @@ class Program
         Console.WriteLine("  --clients <count>       Number of concurrent clients");
         Console.WriteLine("  --duration <seconds>    Test duration in seconds");
         Console.WriteLine("  --export <format>       Export format: json, csv, both");
+        Console.WriteLine("  --log <path>            Enable file logging to specified path");
         Console.WriteLine();
         Console.WriteLine("Custom Options:");
         Console.WriteLine("  --host <host>           Target server hostname (default: localhost)");
@@ -67,11 +68,13 @@ class Program
         Console.WriteLine("  --max-size <bytes>      Maximum value size (default: 1000)");
         Console.WriteLine("  --key-space <count>     Key space size (default: 100000)");
         Console.WriteLine("  --export <format>       Export format: json, csv, both (default: json)");
+        Console.WriteLine("  --log <path>            Enable file logging to specified path");
         Console.WriteLine();
         Console.WriteLine("Examples:");
         Console.WriteLine("  MemCacheLoadTester list");
         Console.WriteLine("  MemCacheLoadTester scenario read-heavy --clients 50 --duration 120");
         Console.WriteLine("  MemCacheLoadTester custom --clients 20 --set-percent 50 --get-percent 45");
+        Console.WriteLine("  MemCacheLoadTester scenario stress --log ./debug.log");
         
         return 0;
     }
@@ -142,6 +145,10 @@ class Program
                     break;
                 case "--export":
                     ConfigureExport(config, value);
+                    break;
+                case "--log":
+                    config.Reporting.EnableFileLogging = true;
+                    config.Reporting.LogFilePath = value;
                     break;
             }
         }
@@ -251,6 +258,10 @@ class Program
                     break;
                 case "--export":
                     ConfigureExport(config, value);
+                    break;
+                case "--log":
+                    config.Reporting.EnableFileLogging = true;
+                    config.Reporting.LogFilePath = value;
                     break;
             }
         }
