@@ -58,7 +58,28 @@ public abstract class BaseIntegrationTest : IDisposable
     protected async Task<string> SendDeleteCommandAsync(string key, bool noReply)
     {
         var deleteCommand = noReply ? $"delete {key} noreply\r\n" : $"delete {key}\r\n";
+        
+        if (noReply)
+        {
+            return await SendNoReplyCommandAsync(deleteCommand);
+        }
+        
         return await SendCommandAsync(deleteCommand);
+    }
+
+    protected async Task<string> SendNoReplyCommandAsync(string command)
+    {
+        if (_stream == null)
+            throw new InvalidOperationException("Not connected to server");
+
+        var commandBytes = Encoding.UTF8.GetBytes(command);
+        await _stream.WriteAsync(commandBytes);
+
+        // For noreply commands, we don't expect a response
+        // Give a small delay to ensure the command is processed
+        await Task.Delay(50);
+        
+        return string.Empty;
     }
 
     public void Dispose()

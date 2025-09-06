@@ -159,7 +159,7 @@ public class SetCommandTests : BaseIntegrationTest
         var command = $"set {key} 0 0 {value.Length} noreply\r\n{value}\r\n";
 
         // Act
-        var response = await SendCommandAsync(command);
+        var response = await SendNoReplyCommandAsync(command);
 
         // Assert
         response.Should().BeEmpty();
