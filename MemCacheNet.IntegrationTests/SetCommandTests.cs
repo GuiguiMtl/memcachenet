@@ -1,3 +1,6 @@
+using System.Net.Sockets;
+using System.Text;
+
 namespace MemCacheNet.IntegrationTests;
 
 public class SetCommandTests : BaseIntegrationTest
@@ -195,10 +198,21 @@ public class SetCommandTests : BaseIntegrationTest
             var taskId = i;
             tasks.Add(Task.Run(async () =>
             {
-                await ConnectAsync();
+                // Each concurrent task needs its own connection
+                using var client = new TcpClient();
+                await client.ConnectAsync(DefaultHost, DefaultPort);
+                using var stream = client.GetStream();
+                
                 var key = $"concurrent_{taskId}";
                 var value = $"value_{taskId}";
-                return await SendSetCommandAsync(key, value);
+                var setCommand = $"set {key} 0 0 {value.Length}\r\n{value}\r\n";
+                
+                var commandBytes = Encoding.UTF8.GetBytes(setCommand);
+                await stream.WriteAsync(commandBytes);
+
+                var buffer = new byte[4096];
+                var bytesRead = await stream.ReadAsync(buffer);
+                return Encoding.UTF8.GetString(buffer, 0, bytesRead);
             }));
         }
 

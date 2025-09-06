@@ -89,7 +89,7 @@ public class MemCacheConnectionHandlerTests
                 withCallback ? OnLineReadCallback : null
             );
             
-            var connectionTask = connectionHandler.HandleConnectionAsync();
+            var connectionTask = connectionHandler.HandleConnectionAsync(CancellationToken.None);
             await Task.WhenAll(serverTask, connectionTask);
             
             // Assert
@@ -310,7 +310,7 @@ public class MemCacheConnectionHandlerTests
                         await writeResponse(response);
                     }
                 });
-            await connectionHandler.HandleConnectionAsync();
+            await connectionHandler.HandleConnectionAsync(CancellationToken.None);
         });
         
         // Act - Connect as client and send command

@@ -193,7 +193,7 @@ public class MemCacheTests
         public async Task SetAsync_WhenMaxKeysReached_EvictsOldestKey()
         {
             // Arrange
-            const string keyToEvict = "oldKey";
+            const string keyToEvict = "key0";  // Use a key that actually exists in the cache
             _mockEvictionPolicy.Setup(ep => ep.KeyToRemove()).Returns(keyToEvict);
 
             // Fill cache to max capacity

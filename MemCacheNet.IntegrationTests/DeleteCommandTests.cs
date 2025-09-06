@@ -61,7 +61,7 @@ public class DeleteCommandTests : BaseIntegrationTest
         var key = "nonexistentnoreply";
 
         // Act
-        var response = await SendDeleteCommandAsync(key, noReply: true);
+        var response = await SendDeleteCommandAsync(key, noReply: true, expectAnswer: true);
 
         // Assert
         response.Should().Contain("NOT_FOUND");

@@ -55,11 +55,11 @@ public abstract class BaseIntegrationTest : IDisposable
         return await SendCommandAsync(deleteCommand);
     }
 
-    protected async Task<string> SendDeleteCommandAsync(string key, bool noReply)
+    protected async Task<string> SendDeleteCommandAsync(string key, bool noReply, bool expectAnswer = false)
     {
         var deleteCommand = noReply ? $"delete {key} noreply\r\n" : $"delete {key}\r\n";
         
-        if (noReply)
+        if (noReply && !expectAnswer)
         {
             return await SendNoReplyCommandAsync(deleteCommand);
         }

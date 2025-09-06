@@ -29,7 +29,7 @@ public class MemCacheResponseFormatterTests
 
         // Assert
         var resultString = Encoding.UTF8.GetString(result);
-        Assert.That(resultString, Does.Contain("VALUE $testkey $0 $9"));
+        Assert.That(resultString, Does.Contain("VALUE testkey 0 9"));
         Assert.That(resultString, Does.Contain("testvalue"));
         Assert.That(resultString, Does.EndWith("END\r\n"));
     }
@@ -65,9 +65,9 @@ public class MemCacheResponseFormatterTests
 
         // Assert
         var resultString = Encoding.UTF8.GetString(result);
-        Assert.That(resultString, Does.Contain("VALUE $key1 $0 $6"));
+        Assert.That(resultString, Does.Contain("VALUE key1 0 6"));
         Assert.That(resultString, Does.Contain("value1"));
-        Assert.That(resultString, Does.Contain("VALUE $key2 $1 $6"));
+        Assert.That(resultString, Does.Contain("VALUE key2 1 6"));
         Assert.That(resultString, Does.Contain("value2"));
         Assert.That(resultString, Does.EndWith("END\r\n"));
     }
