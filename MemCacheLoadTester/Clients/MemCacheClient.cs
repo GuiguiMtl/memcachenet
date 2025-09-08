@@ -51,8 +51,8 @@ public class MemCacheClient : IDisposable
             var command = $"set {key} {flags} {expiration} {value.Length}\r\n";
             var commandBytes = Encoding.UTF8.GetBytes(command);
             
-            // Log the request with context
-            var valueInfo = value.Length <= 100 ? $" + [{Encoding.UTF8.GetString(value)}]" : $" + [binary data: {value.Length} bytes]";
+            // Log the request with context - use safe string conversion for value data
+            var valueInfo = value.Length <= 100 ? $" + [{ConvertBytesToSafeString(value, 0, value.Length)}]" : $" + [binary data: {value.Length} bytes]";
             _logger?.LogRequestResponseWithContext(_clientId, "SET", key, "REQUEST", $"{command.TrimEnd()}{valueInfo}", $"flags:{flags},exp:{expiration},size:{value.Length}");
             
             // Send command header
@@ -215,8 +215,9 @@ public class MemCacheClient : IDisposable
                     var chunk = Encoding.UTF8.GetString(_buffer, 0, bytesRead);
                     responseBuilder.Append(chunk);
                     
-                    // Log what we received for debugging with context
-                    _logger?.LogRequestResponseWithContext(_clientId, operation, key, "RAW_DATA", $"Received {bytesRead} bytes: {chunk.Replace("\r", "[CR]").Replace("\n", "[LF]")}");
+                    // Log what we received for debugging with context - use safe string conversion
+                    var safeChunk = ConvertBytesToSafeString(_buffer, 0, bytesRead);
+                    _logger?.LogRequestResponseWithContext(_clientId, operation, key, "RAW_DATA", $"Received {bytesRead} bytes: {safeChunk.Replace("\r", "[CR]").Replace("\n", "[LF]")}");
                     
                     // Simple heuristic: if we see common end patterns, we're probably done
                     var current = responseBuilder.ToString();
@@ -246,9 +247,71 @@ public class MemCacheClient : IDisposable
         }
         
         var response = responseBuilder.ToString();
-        _logger?.LogRequestResponseWithContext(_clientId, operation, key, "FINAL_RESPONSE", $"Complete response ({response.Length} chars): {response.Replace("\r", "[CR]").Replace("\n", "[LF]")}");
+        // Use safe string conversion for logging the final response as well
+        var safeResponse = SafeStringForLogging(response);
+        _logger?.LogRequestResponseWithContext(_clientId, operation, key, "FINAL_RESPONSE", $"Complete response ({response.Length} chars): {safeResponse.Replace("\r", "[CR]").Replace("\n", "[LF]")}");
         
         return response;
+    }
+
+    /// <summary>
+    /// Safely converts a string for logging, removing or replacing problematic Unicode characters.
+    /// </summary>
+    private static string SafeStringForLogging(string input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return input;
+
+        var sb = new StringBuilder(input.Length);
+        foreach (char c in input)
+        {
+            if (char.IsSurrogate(c) || c > 127 && (c < 160 || c > 255))
+            {
+                // Replace problematic Unicode characters with hex representation
+                sb.Append($"\\u{(int)c:X4}");
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Safely converts bytes to a string for logging, handling invalid UTF-8 sequences.
+    /// </summary>
+    private static string ConvertBytesToSafeString(byte[] buffer, int offset, int count)
+    {
+        try
+        {
+            // Use UTF-8 decoder with replacement fallback to handle invalid sequences
+            var decoder = Encoding.UTF8.GetDecoder();
+            decoder.Fallback = DecoderFallback.ReplacementFallback;
+            
+            var charCount = decoder.GetCharCount(buffer, offset, count, flush: true);
+            var chars = new char[charCount];
+            decoder.GetChars(buffer, offset, count, chars, 0, flush: true);
+            
+            return new string(chars);
+        }
+        catch
+        {
+            // If even the safe conversion fails, convert to hex representation
+            var sb = new StringBuilder();
+            for (int i = offset; i < offset + count; i++)
+            {
+                if (buffer[i] >= 32 && buffer[i] <= 126) // Printable ASCII
+                {
+                    sb.Append((char)buffer[i]);
+                }
+                else
+                {
+                    sb.Append($"\\x{buffer[i]:X2}");
+                }
+            }
+            return sb.ToString();
+        }
     }
 
     public void Dispose()

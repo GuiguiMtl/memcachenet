@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 
 namespace MemCacheLoadTester.Logging;
 
@@ -27,7 +28,7 @@ public class FileLogger : IDisposable
             Directory.CreateDirectory(directory);
         }
 
-        _writer = new StreamWriter(_logFilePath, append: true) { AutoFlush = false };
+        _writer = new StreamWriter(_logFilePath, append: true, Encoding.UTF8) { AutoFlush = false };
         _logQueue = new ConcurrentQueue<string>();
         _writeSemaphore = new SemaphoreSlim(1, 1);
         _cancellationTokenSource = new CancellationTokenSource();
