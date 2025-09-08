@@ -1,3 +1,5 @@
+**/*.csv
+**/results/*
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/
