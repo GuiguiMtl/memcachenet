@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using memcachenet.MemCacheServer.EvictionPolicyManager;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -47,7 +48,9 @@ public class MemCacheServer : IHostedService
                             .WithExpirationTime(
                                 TimeSpan.FromSeconds(settings.ExpirationTimeSeconds))
                             .WithMaxKeys(settings.MaxKeys)
-                            .WithMaxCacheSize(settings.MaxTotalCacheSizeBytes).Build();
+                            .WithMaxCacheSize(settings.MaxTotalCacheSizeBytes)
+                            .WithExpirationPolicy(new LruEvictionPolicyManagerWithLock())
+                            .Build();
         _commandHandler = new MemCacheCommandHandler(_memCache, _loggerFactory?.CreateLogger<MemCacheCommandHandler>());
         _connectionSemaphore = new SemaphoreSlim(settings.MaxConcurrentConnections);
         _listener = new(IPAddress.Any, settings.Port);

@@ -128,8 +128,6 @@ public class MemCacheBuilder
 /// </summary>
 public class MemCache : IMemCache
 {
-    private readonly SemaphoreSlim _cacheLock = new SemaphoreSlim(1, 1);
-
     private readonly int _maxKeys;
     private readonly int _maxCacheSize;
     private readonly TimeSpan _expirationTime;
@@ -163,54 +161,43 @@ public class MemCache : IMemCache
     /// <param name="Flags">Opaque client flags to persist with the value.</param>
     public async Task<bool> SetAsync(string key, byte[] value, uint Flags)
     {
-        // lock so it can safely do the operation
-        await _cacheLock.WaitAsync();
-        
-        try
+        // Check cache size limit
+        if (_cacheSize + value.Length > _maxCacheSize)
         {
-            // Check cache size limit
-            if (_cacheSize + value.Length > _maxCacheSize)
-            {
-                return false;
-            }
-
-            // Check if we reached the max number of keys
-            if (_cache.Count >= _maxKeys && !_cache.ContainsKey(key))
-            {
-                // Find the key to be removed based on the eviction policy
-                var keyToRemove = _evictionPolicyManager.KeyToRemove();
-                if (_cache.Remove(keyToRemove, out var removedItem))
-                {
-                    _evictionPolicyManager.Delete(keyToRemove);
-                    _cacheSize -= removedItem.Value.Length;
-                }
-            }
-
-            // If updating existing key, subtract old value size
-            if (_cache.TryGetValue(key, out var existingItem))
-            {
-                _cacheSize -= existingItem.Value.Length;
-                _evictionPolicyManager.Delete(key);
-            }
-
-            _cache[key] = new MemCacheItem
-            {
-                Value = value,
-                Flags = Flags,
-                Expiration = DateTime.Now.Add(_expirationTime)
-            };
-            _evictionPolicyManager.Add(key);
-
-            // update the total size of the cache
-            _cacheSize += value.Length;
-        }
-        finally
-        {
-            // release the lock
-            _cacheLock.Release();
+            return false;
         }
 
+        // Check if we reached the max number of keys
+        if (_cache.Count >= _maxKeys && !_cache.ContainsKey(key))
+        {
+            // Find the key to be removed based on the eviction policy
+            var keyToRemove = await _evictionPolicyManager.KeyToRemove();
+            if (_cache.Remove(keyToRemove, out var removedItem))
+            {
+                await _evictionPolicyManager.Delete(keyToRemove);
+                _cacheSize -= removedItem.Value.Length;
+            }
+        }
+
+        // If updating existing key, subtract old value size
+        if (_cache.TryGetValue(key, out var existingItem))
+        {
+            _cacheSize -= existingItem.Value.Length;
+            await _evictionPolicyManager.Delete(key);
+        }
+
+        _cache[key] = new MemCacheItem
+        {
+            Value = value,
+            Flags = Flags,
+            Expiration = DateTime.Now.Add(_expirationTime)
+        };
+        await _evictionPolicyManager.Add(key);
+
+        // update the total size of the cache
+        _cacheSize += value.Length;
         return true;
+
     }
 
     /// <summary>
@@ -220,9 +207,6 @@ public class MemCache : IMemCache
     /// <returns>The stored value bytes, or an empty array if the key is not found.</returns>
     public async Task<MemCacheItem?> TryGetAsync(string key)
     {
-        await _cacheLock.WaitAsync();
-        try
-        {
             if (_cache.TryGetValue(key, out var item))
             {
                 // Check the expiration date
@@ -234,21 +218,16 @@ public class MemCache : IMemCache
                     {
                         _cacheSize -= removedItem.Value.Length;
                     }
-                    _evictionPolicyManager.Delete(key);
+                    await _evictionPolicyManager.Delete(key);
                     return null;
                 }
                 
                 // Key is valid, update access tracking
-                _evictionPolicyManager.Get(key);
+                await _evictionPolicyManager.Get(key);
                 return item;
             }
             
             return null;
-        }
-        finally
-        {
-            _cacheLock.Release();
-        }
     }
 
     /// <summary>
@@ -259,18 +238,10 @@ public class MemCache : IMemCache
     {
         if (_cache.Remove(key, out var item))
         {
-            await _cacheLock.WaitAsync();
-            try
-            {
-                _evictionPolicyManager.Delete(key);
+                await  _evictionPolicyManager.Delete(key);
 
                 // update the total size of the cache
                 _cacheSize -= item.Value.Length;
-            }
-            finally
-            {
-                _cacheLock.Release();
-            }
             return true;
         }
         return false;
@@ -286,9 +257,6 @@ public class MemCache : IMemCache
         var keysToCheck = _cache.Keys.OrderBy(k => Guid.NewGuid()).Take(sampleSize).ToList();
         var keysToDelete = new List<string>();
 
-        await _cacheLock.WaitAsync();
-        try
-        {
             // Check which keys are expired while holding the lock
             foreach (var key in keysToCheck)
             {
@@ -303,15 +271,10 @@ public class MemCache : IMemCache
             {
                 if (_cache.Remove(key, out var item))
                 {
-                    _evictionPolicyManager.Delete(key);
+                    await _evictionPolicyManager.Delete(key);
                     _cacheSize -= item.Value.Length;
                 }
             }
-        }
-        finally
-        {
-            _cacheLock.Release();
-        }
     }
 }
 

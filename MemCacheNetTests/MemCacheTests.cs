@@ -194,7 +194,7 @@ public class MemCacheTests
         {
             // Arrange
             const string keyToEvict = "key0";  // Use a key that actually exists in the cache
-            _mockEvictionPolicy.Setup(ep => ep.KeyToRemove()).Returns(keyToEvict);
+            _mockEvictionPolicy.Setup(ep => ep.KeyToRemove()).ReturnsAsync(keyToEvict);
 
             // Fill cache to max capacity
             for (int i = 0; i < MaxKeys; i++)
@@ -549,6 +549,7 @@ public class MemCacheIntegrationTests
             .WithMaxKeys(100)
             .WithMaxCacheSize(10000)
             .WithExpirationTime(TimeSpan.FromMinutes(10))
+            .WithExpirationPolicy(new LruEvictionPolicyManagerWithLock())
             .Build();
 
         const int numberOfTasks = 10;

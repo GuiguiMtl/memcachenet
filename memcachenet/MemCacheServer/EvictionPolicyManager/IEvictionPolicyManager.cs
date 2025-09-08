@@ -3,8 +3,8 @@ namespace memcachenet.MemCacheServer.EvictionPolicyManager;
 // Provide an interface to manage the expiration of the cache
 public interface IEvictionPolicyManager
 {
-    string KeyToRemove();
-    void Add(string key);
-    void Delete(string key);
-    void Get(string key);
+    Task<string> KeyToRemove();
+    Task Add(string key);
+    Task Delete(string key);
+    Task Get(string key);
 }
