@@ -2,9 +2,11 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Serilog;
 using System;
 
 namespace memcachenet;
@@ -15,7 +17,23 @@ class Program
     {
         try
         {
+            // Delete the existing log file to overwrite it on startup
+            var logFilePath = "memcache-server.log";
+            if (File.Exists(logFilePath))
+            {
+                File.Delete(logFilePath);
+            }
+
             var builder = Host.CreateApplicationBuilder(args);
+
+            // Configure Serilog
+            Log.Logger = new LoggerConfiguration()
+                .ReadFrom.Configuration(builder.Configuration)
+                .CreateLogger();
+
+            // Clear default logging providers and add Serilog
+            builder.Logging.ClearProviders();
+            builder.Logging.AddSerilog();
 
             builder.Services.Configure<MemCacheServerSettings>(
                 builder.Configuration.GetSection("MemCacheServerSettings"));
@@ -76,6 +94,7 @@ class Program
                             tracerProviderBuilder.AddOtlpExporter(options =>
                             {
                                 options.Endpoint = new Uri(telemetrySettings.Exporters.OTLP.Endpoint);
+                                options.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf;
                             });
                         }
                     });
@@ -94,14 +113,18 @@ class Program
             await app.StartAsync();
 
             // 2. Keep the application running until Ctrl+C is pressed
-            Console.WriteLine("Server started. Press Ctrl+C to stop.");
+            Log.Information("MemCache server started successfully");
             await app.WaitForShutdownAsync();
             
-            Console.WriteLine("Shutting down...");
+            Log.Information("MemCache server shutting down...");
         }
         catch (Exception e)
         {
-            Console.WriteLine(e);
+            Log.Fatal(e, "MemCache server terminated unexpectedly");
+        }
+        finally
+        {
+            Log.CloseAndFlush();
         }
     }
     

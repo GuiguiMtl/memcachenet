@@ -15,6 +15,7 @@ public class LoadTester
     private readonly LoadTestConfig _config;
     private readonly MetricsCollector _metrics;
     private readonly MetricsReporter _reporter;
+    private readonly SharedKeyTracker _keyTracker;
     private readonly KeyGenerator _keyGenerator;
     private readonly ValueGenerator _valueGenerator;
     private readonly WorkloadSelector _workloadSelector;
@@ -32,7 +33,8 @@ public class LoadTester
         _metrics = new MetricsCollector();
         _reporter = new MetricsReporter(_config.Reporting);
         
-        _keyGenerator = new KeyGenerator(_config.Keys);
+        _keyTracker = new SharedKeyTracker();
+        _keyGenerator = new KeyGenerator(_config.Keys, _keyTracker);
         _valueGenerator = new ValueGenerator(_config.Values);
         _workloadSelector = new WorkloadSelector(_config.Workload);
         
@@ -209,7 +211,7 @@ public class LoadTester
         
         try
         {
-            client = new MemCacheClient(_config.Host, _config.Port);
+            client = new MemCacheClient(_config.Host, _config.Port, _logger, clientId);
             _logger?.LogConnection(clientId, "Connected", $"to {_config.Host}:{_config.Port}");
             
             while (!cancellationToken.IsCancellationRequested)
@@ -281,7 +283,15 @@ public class LoadTester
     {
         var key = _keyGenerator.GenerateKey();
         var value = _valueGenerator.GenerateValue();
-        return await client.SetAsync(key, value);
+        var result = await client.SetAsync(key, value);
+        
+        // Register the key if SET was successful
+        if (result.Success)
+        {
+            _keyGenerator.RegisterStoredKey(key);
+        }
+        
+        return result;
     }
 
     /// <summary>
@@ -289,14 +299,21 @@ public class LoadTester
     /// </summary>
     private async Task<OperationResult> ExecuteGetOperation(MemCacheClient client)
     {
-        string key;
+        string? key;
         
         if (_workloadSelector.ShouldCacheHit())
         {
+            // Try to get a key from our local list of keys we've SET
             key = _keyGenerator.GenerateExistingKey();
+            if (key == null)
+            {
+                // No keys in our local list yet, do a SET operation to build up our key list
+                return await ExecuteSetOperation(client);
+            }
         }
         else
         {
+            // Intentional cache miss - generate a random key that probably doesn't exist
             key = _keyGenerator.GenerateKey();
         }
         
@@ -308,8 +325,23 @@ public class LoadTester
     /// </summary>
     private async Task<OperationResult> ExecuteDeleteOperation(MemCacheClient client)
     {
+        // Try to get a key from our local list of keys we know exist
         var key = _keyGenerator.GenerateExistingKey();
-        return await client.DeleteAsync(key);
+        if (key == null)
+        {
+            // No keys in our local list yet, do a SET operation to build up our key list
+            return await ExecuteSetOperation(client);
+        }
+        
+        var result = await client.DeleteAsync(key);
+        
+        // Remove the key from our local list if DELETE was successful
+        if (result.Success)
+        {
+            _keyGenerator.RemoveDeletedKey(key);
+        }
+        
+        return result;
     }
 
     /// <summary>

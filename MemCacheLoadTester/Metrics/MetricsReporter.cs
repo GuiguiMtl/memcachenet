@@ -47,11 +47,11 @@ public class MetricsReporter
         sb.AppendLine($"  Failed:           {metrics.FailedOperations:N0}");
         sb.AppendLine();
         
-        // Operation breakdown
+        // Operation breakdown with success rates
         sb.AppendLine("Operation Types:");
-        sb.AppendLine($"  SET:              {metrics.SetOperations:N0}");
-        sb.AppendLine($"  GET:              {metrics.GetOperations:N0}");
-        sb.AppendLine($"  DELETE:           {metrics.DeleteOperations:N0}");
+        sb.AppendLine($"  SET:              {metrics.SetOperations:N0} ({metrics.SetSuccessful:N0} success, {metrics.SetFailed:N0} failed) - {metrics.SetSuccessRate:F1}%");
+        sb.AppendLine($"  GET:              {metrics.GetOperations:N0} ({metrics.GetSuccessful:N0} success, {metrics.GetFailed:N0} failed) - {metrics.GetSuccessRate:F1}%");
+        sb.AppendLine($"  DELETE:           {metrics.DeleteOperations:N0} ({metrics.DeleteSuccessful:N0} success, {metrics.DeleteFailed:N0} failed) - {metrics.DeleteSuccessRate:F1}%");
         sb.AppendLine();
         
         // Latency metrics
@@ -111,9 +111,9 @@ public class MetricsReporter
         var deletePercent = metrics.TotalOperations > 0 ? (metrics.DeleteOperations / (double)metrics.TotalOperations) * 100 : 0;
         
         sb.AppendLine("OPERATION BREAKDOWN:");
-        sb.AppendLine($"  SET:                  {metrics.SetOperations:N0} ({setPercent:F1}%)");
-        sb.AppendLine($"  GET:                  {metrics.GetOperations:N0} ({getPercent:F1}%)");
-        sb.AppendLine($"  DELETE:               {metrics.DeleteOperations:N0} ({deletePercent:F1}%)");
+        sb.AppendLine($"  SET:                  {metrics.SetOperations:N0} ({setPercent:F1}%) - Success: {metrics.SetSuccessRate:F1}%");
+        sb.AppendLine($"  GET:                  {metrics.GetOperations:N0} ({getPercent:F1}%) - Success: {metrics.GetSuccessRate:F1}%");
+        sb.AppendLine($"  DELETE:               {metrics.DeleteOperations:N0} ({deletePercent:F1}%) - Success: {metrics.DeleteSuccessRate:F1}%");
         sb.AppendLine();
         
         if (metrics.FailedOperations > 0)

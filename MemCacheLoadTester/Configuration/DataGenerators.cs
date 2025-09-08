@@ -1,7 +1,78 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace MemCacheLoadTester.Configuration;
+
+/// <summary>
+/// Thread-safe local tracker for keys that have been successfully SET by our clients.
+/// This maintains a list of keys we know exist so GET and DELETE operations can target them.
+/// No cache pre-warming needed - we build this list dynamically as SET operations succeed.
+/// </summary>
+public class SharedKeyTracker
+{
+    private readonly ConcurrentSet<string> _existingKeys;
+    private readonly Random _random;
+    private readonly object _lock = new();
+
+    public SharedKeyTracker()
+    {
+        _existingKeys = new ConcurrentSet<string>();
+        _random = new Random();
+    }
+
+    /// <summary>
+    /// Registers a key as successfully stored in the cache.
+    /// </summary>
+    public void RegisterKey(string key)
+    {
+        _existingKeys.TryAdd(key);
+    }
+
+    /// <summary>
+    /// Removes a key when it's successfully deleted from the cache.
+    /// </summary>
+    public void RemoveKey(string key)
+    {
+        _existingKeys.TryRemove(key);
+    }
+
+    /// <summary>
+    /// Gets a random existing key, or null if no keys exist.
+    /// </summary>
+    public string? GetRandomExistingKey()
+    {
+        var keys = _existingKeys.ToArray();
+        if (keys.Length == 0)
+            return null;
+
+        return keys[_random.Next(keys.Length)];
+    }
+
+    /// <summary>
+    /// Gets the number of keys currently tracked as existing.
+    /// </summary>
+    public int KeyCount => _existingKeys.Count;
+
+    /// <summary>
+    /// Checks if a specific key is tracked as existing.
+    /// </summary>
+    public bool KeyExists(string key) => _existingKeys.Contains(key);
+}
+
+/// <summary>
+/// Thread-safe set implementation for tracking keys.
+/// </summary>
+public class ConcurrentSet<T> where T : notnull
+{
+    private readonly ConcurrentDictionary<T, byte> _dictionary = new();
+
+    public bool TryAdd(T item) => _dictionary.TryAdd(item, 0);
+    public bool TryRemove(T item) => _dictionary.TryRemove(item, out _);
+    public bool Contains(T item) => _dictionary.ContainsKey(item);
+    public int Count => _dictionary.Count;
+    public T[] ToArray() => _dictionary.Keys.ToArray();
+}
 
 /// <summary>
 /// Generates keys according to the specified pattern.
@@ -10,12 +81,14 @@ public class KeyGenerator
 {
     private readonly KeyConfig _config;
     private readonly Random _random;
+    private readonly SharedKeyTracker _keyTracker;
     private long _sequentialCounter;
 
-    public KeyGenerator(KeyConfig config)
+    public KeyGenerator(KeyConfig config, SharedKeyTracker keyTracker)
     {
         _config = config;
         _random = new Random();
+        _keyTracker = keyTracker;
         _sequentialCounter = config.StartingNumber;
     }
 
@@ -34,14 +107,35 @@ public class KeyGenerator
     }
 
     /// <summary>
-    /// Generates a key that should exist (for cache hits).
+    /// Gets a key from our local list of keys that we know exist.
+    /// Returns null if no keys have been successfully SET yet.
     /// </summary>
-    public string GenerateExistingKey()
+    public string? GenerateExistingKey()
     {
-        // Generate a key from the existing key space
-        var keyNumber = _random.NextInt64(1, Math.Min(_sequentialCounter, _config.KeySpaceSize));
-        return $"{_config.Prefix}{keyNumber}";
+        // Get a random key from our local list of successfully SET keys
+        return _keyTracker.GetRandomExistingKey();
     }
+
+    /// <summary>
+    /// Registers a key as successfully stored in the cache.
+    /// </summary>
+    public void RegisterStoredKey(string key)
+    {
+        _keyTracker.RegisterKey(key);
+    }
+
+    /// <summary>
+    /// Removes a key when it's successfully deleted from the cache.
+    /// </summary>
+    public void RemoveDeletedKey(string key)
+    {
+        _keyTracker.RemoveKey(key);
+    }
+
+    /// <summary>
+    /// Gets the number of keys currently tracked as existing.
+    /// </summary>
+    public int ExistingKeyCount => _keyTracker.KeyCount;
 
     private string GenerateSequentialKey()
     {

@@ -22,6 +22,16 @@ public class MetricsCollector
     private long _getOperations;
     private long _deleteOperations;
     
+    // Per-operation success counters
+    private long _setSuccessful;
+    private long _getSuccessful;
+    private long _deleteSuccessful;
+    
+    // Per-operation failure counters
+    private long _setFailed;
+    private long _getFailed;
+    private long _deleteFailed;
+    
     // Timing accumulators
     private double _totalLatencyMs;
     private double _minLatencyMs = double.MaxValue;
@@ -73,17 +83,29 @@ public class MetricsCollector
                 }
             }
             
-            // Update operation type counters
+            // Update operation type counters and per-operation success/failure
             switch (result.Operation.ToUpper())
             {
                 case "SET":
                     _setOperations++;
+                    if (result.Success)
+                        _setSuccessful++;
+                    else
+                        _setFailed++;
                     break;
                 case "GET":
                     _getOperations++;
+                    if (result.Success)
+                        _getSuccessful++;
+                    else
+                        _getFailed++;
                     break;
                 case "DELETE":
                     _deleteOperations++;
+                    if (result.Success)
+                        _deleteSuccessful++;
+                    else
+                        _deleteFailed++;
                     break;
             }
             
@@ -120,6 +142,21 @@ public class MetricsCollector
                 SetOperations = _setOperations,
                 GetOperations = _getOperations,
                 DeleteOperations = _deleteOperations,
+                
+                // Per-operation success counts
+                SetSuccessful = _setSuccessful,
+                GetSuccessful = _getSuccessful,
+                DeleteSuccessful = _deleteSuccessful,
+                
+                // Per-operation failure counts
+                SetFailed = _setFailed,
+                GetFailed = _getFailed,
+                DeleteFailed = _deleteFailed,
+                
+                // Per-operation success rates
+                SetSuccessRate = _setOperations > 0 ? (_setSuccessful / (double)_setOperations) * 100 : 0,
+                GetSuccessRate = _getOperations > 0 ? (_getSuccessful / (double)_getOperations) * 100 : 0,
+                DeleteSuccessRate = _deleteOperations > 0 ? (_deleteSuccessful / (double)_deleteOperations) * 100 : 0,
                 
                 // Success rate
                 SuccessRate = _totalOperations > 0 ? (_successfulOperations / (double)_totalOperations) * 100 : 0,
@@ -189,6 +226,12 @@ public class MetricsCollector
             _setOperations = 0;
             _getOperations = 0;
             _deleteOperations = 0;
+            _setSuccessful = 0;
+            _getSuccessful = 0;
+            _deleteSuccessful = 0;
+            _setFailed = 0;
+            _getFailed = 0;
+            _deleteFailed = 0;
             _totalLatencyMs = 0;
             _minLatencyMs = double.MaxValue;
             _maxLatencyMs = double.MinValue;
@@ -215,6 +258,21 @@ public class MetricsSnapshot
     public long SetOperations { get; set; }
     public long GetOperations { get; set; }
     public long DeleteOperations { get; set; }
+    
+    // Per-operation success counts
+    public long SetSuccessful { get; set; }
+    public long GetSuccessful { get; set; }
+    public long DeleteSuccessful { get; set; }
+    
+    // Per-operation failure counts
+    public long SetFailed { get; set; }
+    public long GetFailed { get; set; }
+    public long DeleteFailed { get; set; }
+    
+    // Per-operation success rates
+    public double SetSuccessRate { get; set; }
+    public double GetSuccessRate { get; set; }
+    public double DeleteSuccessRate { get; set; }
     
     // Rates and throughput
     public double SuccessRate { get; set; }

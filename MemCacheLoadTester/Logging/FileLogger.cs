@@ -105,6 +105,35 @@ public class FileLogger : IDisposable
         Log("OP", message);
     }
 
+    /// <summary>
+    /// Logs raw request/response communication for protocol debugging.
+    /// </summary>
+    public void LogRequestResponse(int clientId, string type, string data)
+    {
+        // Replace CRLF with visible markers for better readability
+        var cleanData = data.Replace("\r\n", "[CRLF]").Replace("\r", "[CR]").Replace("\n", "[LF]");
+        var message = $"Client-{clientId:D3}: {type} - {cleanData}";
+        Log("PROTO", message);
+    }
+
+    /// <summary>
+    /// Logs request/response communication with contextual information (operation, key, etc.).
+    /// </summary>
+    public void LogRequestResponseWithContext(int clientId, string operation, string key, string type, string data, string? additionalContext = null)
+    {
+        // Replace CRLF with visible markers for better readability
+        var cleanData = data.Replace("\r\n", "[CRLF]").Replace("\r", "[CR]").Replace("\n", "[LF]");
+        
+        var context = $"[{operation}:{key}]";
+        if (!string.IsNullOrEmpty(additionalContext))
+        {
+            context += $"[{additionalContext}]";
+        }
+        
+        var message = $"Client-{clientId:D3}: {context} {type} - {cleanData}";
+        Log("PROTO", message);
+    }
+
     private void Log(string level, string message)
     {
         if (_disposed) return;

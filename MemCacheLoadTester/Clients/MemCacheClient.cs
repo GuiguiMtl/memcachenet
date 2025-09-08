@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
+using MemCacheLoadTester.Logging;
 
 namespace MemCacheLoadTester.Clients;
 
@@ -14,18 +15,24 @@ public class MemCacheClient : IDisposable
     private readonly NetworkStream _stream;
     private readonly byte[] _buffer;
     private bool _disposed;
+    private FileLogger? _logger;
+    private int _clientId;
 
     /// <summary>
     /// Initializes a new MemCache client connection.
     /// </summary>
     /// <param name="host">Server hostname or IP address</param>
     /// <param name="port">Server port (default 11211)</param>
-    public MemCacheClient(string host = "localhost", int port = 11211)
+    /// <param name="logger">Optional logger for request/response logging</param>
+    /// <param name="clientId">Client ID for logging purposes</param>
+    public MemCacheClient(string host = "localhost", int port = 11211, FileLogger? logger = null, int clientId = 0)
     {
         _tcpClient = new TcpClient();
         _tcpClient.Connect(host, port);
         _stream = _tcpClient.GetStream();
         _buffer = new byte[64 * 1024]; // 64KB buffer for responses
+        _logger = logger;
+        _clientId = clientId;
     }
 
     /// <summary>
@@ -44,6 +51,10 @@ public class MemCacheClient : IDisposable
             var command = $"set {key} {flags} {expiration} {value.Length}\r\n";
             var commandBytes = Encoding.UTF8.GetBytes(command);
             
+            // Log the request with context
+            var valueInfo = value.Length <= 100 ? $" + [{Encoding.UTF8.GetString(value)}]" : $" + [binary data: {value.Length} bytes]";
+            _logger?.LogRequestResponseWithContext(_clientId, "SET", key, "REQUEST", $"{command.TrimEnd()}{valueInfo}", $"flags:{flags},exp:{expiration},size:{value.Length}");
+            
             // Send command header
             await _stream.WriteAsync(commandBytes);
             
@@ -54,8 +65,11 @@ public class MemCacheClient : IDisposable
             await _stream.WriteAsync("\r\n"u8.ToArray());
 
             // Read response
-            var response = await ReadResponseAsync();
+            var response = await ReadResponseAsync("SET", key);
             sw.Stop();
+
+            // Log the response with context
+            _logger?.LogRequestResponseWithContext(_clientId, "SET", key, "RESPONSE", response, $"latency:{sw.Elapsed.TotalMilliseconds:F2}ms");
 
             var success = response.StartsWith("STORED");
             return new OperationResult
@@ -69,6 +83,7 @@ public class MemCacheClient : IDisposable
         catch (Exception ex)
         {
             sw.Stop();
+            _logger?.LogRequestResponseWithContext(_clientId, "SET", key, "ERROR", $"SET operation failed: {ex.Message}", $"latency:{sw.Elapsed.TotalMilliseconds:F2}ms");
             return new OperationResult
             {
                 Success = false,
@@ -92,13 +107,22 @@ public class MemCacheClient : IDisposable
             var command = $"get {key}\r\n";
             var commandBytes = Encoding.UTF8.GetBytes(command);
             
+            // Log the request with context
+            _logger?.LogRequestResponseWithContext(_clientId, "GET", key, "REQUEST", command.TrimEnd());
+            
             await _stream.WriteAsync(commandBytes);
             
-            var response = await ReadResponseAsync();
+            var response = await ReadResponseAsync("GET", key);
             sw.Stop();
 
-            // Check if we got a value back (not "END" only)
-            var success = response.StartsWith($"VALUE {key}");
+            // Determine if this is a cache hit or miss, both are successful GET operations
+            var isHit = response.StartsWith($"VALUE {key}");
+            var isMiss = response.Trim() == "END";
+            var success = isHit || isMiss;  // Both hits and misses are successful GET operations
+            
+            var logResponse = response.Length > 200 ? response.Substring(0, 200) + "... (truncated)" : response;
+            var contextInfo = isHit ? "HIT" : (isMiss ? "MISS" : "ERROR");
+            _logger?.LogRequestResponseWithContext(_clientId, "GET", key, "RESPONSE", logResponse, $"{contextInfo},latency:{sw.Elapsed.TotalMilliseconds:F2}ms");
             return new OperationResult
             {
                 Success = success,
@@ -110,6 +134,7 @@ public class MemCacheClient : IDisposable
         catch (Exception ex)
         {
             sw.Stop();
+            _logger?.LogRequestResponseWithContext(_clientId, "GET", key, "ERROR", $"GET operation failed: {ex.Message}", $"latency:{sw.Elapsed.TotalMilliseconds:F2}ms");
             return new OperationResult
             {
                 Success = false,
@@ -133,12 +158,18 @@ public class MemCacheClient : IDisposable
             var command = $"delete {key}\r\n";
             var commandBytes = Encoding.UTF8.GetBytes(command);
             
+            // Log the request with context
+            _logger?.LogRequestResponseWithContext(_clientId, "DELETE", key, "REQUEST", command.TrimEnd());
+            
             await _stream.WriteAsync(commandBytes);
             
-            var response = await ReadResponseAsync();
+            var response = await ReadResponseAsync("DELETE", key);
             sw.Stop();
 
+            // Check success and log the response with context
             var success = response.StartsWith("DELETED");
+            var contextInfo = success ? "DELETED" : "NOT_FOUND";
+            _logger?.LogRequestResponseWithContext(_clientId, "DELETE", key, "RESPONSE", response, $"{contextInfo},latency:{sw.Elapsed.TotalMilliseconds:F2}ms");
             return new OperationResult
             {
                 Success = success,
@@ -150,6 +181,7 @@ public class MemCacheClient : IDisposable
         catch (Exception ex)
         {
             sw.Stop();
+            _logger?.LogRequestResponseWithContext(_clientId, "DELETE", key, "ERROR", $"DELETE operation failed: {ex.Message}", $"latency:{sw.Elapsed.TotalMilliseconds:F2}ms");
             return new OperationResult
             {
                 Success = false,
@@ -161,44 +193,62 @@ public class MemCacheClient : IDisposable
     }
 
     /// <summary>
-    /// Reads a complete response from the server.
-    /// Handles both single-line responses (STORED, DELETED, etc.) and multi-line responses (GET).
+    /// Reads a response from the server with a simple timeout-based approach.
+    /// Just reads what's available and logs it for debugging.
     /// </summary>
-    private async Task<string> ReadResponseAsync()
+    private async Task<string> ReadResponseAsync(string operation = "UNKNOWN", string key = "unknown")
     {
         var responseBuilder = new StringBuilder();
-        var totalBytesRead = 0;
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(12)); // 5 second timeout
         
-        while (true)
+        try
         {
-            var bytesRead = await _stream.ReadAsync(_buffer);
-            if (bytesRead == 0)
-                break;
-                
-            var chunk = Encoding.UTF8.GetString(_buffer, 0, bytesRead);
-            responseBuilder.Append(chunk);
-            totalBytesRead += bytesRead;
-            
-            var currentResponse = responseBuilder.ToString();
-            
-            // Check for complete response patterns
-            if (currentResponse.EndsWith("\r\nEND\r\n") ||     // GET response
-                currentResponse.EndsWith("STORED\r\n") ||      // SET success
-                currentResponse.EndsWith("DELETED\r\n") ||     // DELETE success
-                currentResponse.EndsWith("NOT_FOUND\r\n") ||   // GET/DELETE not found
-                currentResponse.Contains("ERROR") ||           // Any error
-                currentResponse.Contains("CLIENT_ERROR") ||    // Client error
-                currentResponse.Contains("SERVER_ERROR"))      // Server error
+            while (!cts.Token.IsCancellationRequested)
             {
-                break;
+                // Check if data is available
+                if (_stream.DataAvailable)
+                {
+                    var bytesRead = await _stream.ReadAsync(_buffer, cts.Token);
+                    if (bytesRead == 0)
+                        break;
+                        
+                    var chunk = Encoding.UTF8.GetString(_buffer, 0, bytesRead);
+                    responseBuilder.Append(chunk);
+                    
+                    // Log what we received for debugging with context
+                    _logger?.LogRequestResponseWithContext(_clientId, operation, key, "RAW_DATA", $"Received {bytesRead} bytes: {chunk.Replace("\r", "[CR]").Replace("\n", "[LF]")}");
+                    
+                    // Simple heuristic: if we see common end patterns, we're probably done
+                    var current = responseBuilder.ToString();
+                    if (current.Contains("STORED") || current.Contains("DELETED") || 
+                        current.Contains("NOT_FOUND") || current.Contains("END") ||
+                        current.Contains("ERROR"))
+                    {
+                        // Give a small delay to catch any remaining data
+                        await Task.Delay(10, cts.Token);
+                        if (_stream.DataAvailable)
+                        {
+                            continue; // More data coming
+                        }
+                        break;
+                    }
+                }
+                else
+                {
+                    // No data available, wait a bit
+                    await Task.Delay(50, cts.Token);
+                }
             }
-            
-            // Safety check to prevent infinite reading
-            if (totalBytesRead > _buffer.Length)
-                break;
+        }
+        catch (OperationCanceledException)
+        {
+            _logger?.LogRequestResponseWithContext(_clientId, operation, key, "TIMEOUT", "Response reading timed out");
         }
         
-        return responseBuilder.ToString().Trim();
+        var response = responseBuilder.ToString();
+        _logger?.LogRequestResponseWithContext(_clientId, operation, key, "FINAL_RESPONSE", $"Complete response ({response.Length} chars): {response.Replace("\r", "[CR]").Replace("\n", "[LF]")}");
+        
+        return response;
     }
 
     public void Dispose()

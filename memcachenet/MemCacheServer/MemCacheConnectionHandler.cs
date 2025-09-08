@@ -69,48 +69,55 @@ public class MemCacheConnectionHandler(
         // Combine external cancellation token with connection timeout token
         using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(token, _connectionCts.Token);
         var combinedToken = combinedCts.Token;
+        using (_logger?.BeginScope(new Dictionary<string, object>
+        {
+            ["ConnectionId"] = _connectionId,
+        }))
+        {
+            try
+            {
 
-        try
-        {
-            _logger?.LogDebug("Starting connection handling for {ConnectionId} from {ClientEndpoint}", 
-                _connectionId, _client.Client.RemoteEndPoint?.ToString() ?? "unknown");
-                
-            _stream = _client.GetStream();
-            
-            // Initialize idle timer if timeout is configured
-            if (_settings.ConnectionIdleTimeoutSeconds > 0)
-            {
-                StartIdleTimer();
+                _logger?.LogDebug("Starting connection handling from {ClientEndpoint}",
+                    _client.Client.RemoteEndPoint?.ToString() ?? "unknown");
+
+                _stream = _client.GetStream();
+
+                // Initialize idle timer if timeout is configured
+                if (_settings.ConnectionIdleTimeoutSeconds > 0)
+                {
+                    StartIdleTimer();
+                }
+
+                var pipe = new Pipe();
+                Task writing = FillPipeAsync(combinedToken, _stream, pipe.Writer);
+                Task reading = ReadPipeAsync(combinedToken, pipe.Reader);
+
+                await Task.WhenAll(reading, writing);
+
+                _logger?.LogDebug("Connection handling completed");
+
             }
-            
-            var pipe = new Pipe();
-            Task writing = FillPipeAsync(combinedToken, _stream, pipe.Writer);
-            Task reading = ReadPipeAsync(combinedToken, pipe.Reader);
-            
-            await Task.WhenAll(reading, writing);
-            
-            _logger?.LogDebug("Connection handling completed for {ConnectionId}", _connectionId);
-        }
-        catch (OperationCanceledException) when (combinedToken.IsCancellationRequested)
-        {
-            if (_connectionCts.Token.IsCancellationRequested && !token.IsCancellationRequested)
+            catch (OperationCanceledException) when (combinedToken.IsCancellationRequested)
             {
-                _logger?.LogInformation("Connection {ConnectionId} timed out", _connectionId);
+                if (_connectionCts.Token.IsCancellationRequested && !token.IsCancellationRequested)
+                {
+                    _logger?.LogInformation("Connection timed out");
+                }
+                else
+                {
+                    _logger?.LogInformation("Connection cancelled");
+                }
             }
-            else
+            catch (Exception ex)
             {
-                _logger?.LogInformation("Connection {ConnectionId} cancelled", _connectionId);
+                _logger?.LogError(ex, "Error handling connection {ConnectionId}: {ErrorMessage}", _connectionId, ex.Message);
+                throw;
             }
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "Error handling connection {ConnectionId}: {ErrorMessage}", _connectionId, ex.Message);
-            throw;
-        }
-        finally
-        {
-            StopIdleTimer();
-            _client.Close();
+            finally
+            {
+                StopIdleTimer();
+                _client.Close();
+            }
         }
     }
 
@@ -182,12 +189,16 @@ public class MemCacheConnectionHandler(
         {
             _logger?.LogTrace("Starting to read pipe for connection {ConnectionId}", _connectionId);
             
+            ReadOnlySequence<byte> buffer = default;
+            
             while (true && !token.IsCancellationRequested)
             {
                 ReadResult result;
                 
-                // Apply read timeout for incomplete commands if configured
-                if (_settings.ReadTimeoutSeconds > 0)
+                // Apply read timeout only if we have partial data (incomplete command)
+                bool hasPartialData = buffer.Length > 0;
+                
+                if (hasPartialData && _settings.ReadTimeoutSeconds > 0)
                 {
                     using var readTimeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(_settings.ReadTimeoutSeconds));
                     using var combinedReadCts = CancellationTokenSource.CreateLinkedTokenSource(token, readTimeoutCts.Token);
@@ -205,10 +216,11 @@ public class MemCacheConnectionHandler(
                 }
                 else
                 {
+                    // No partial data, wait indefinitely for new command
                     result = await reader.ReadAsync(token);
                 }
                 
-                ReadOnlySequence<byte> buffer = result.Buffer;
+                buffer = result.Buffer;
 
                 while (TryReadMemCacheCommand(ref buffer, out ReadOnlySequence<byte> command))
                 {
@@ -499,10 +511,17 @@ public class MemCacheConnectionHandler(
     /// <returns>A task representing the asynchronous write operation.</returns>
     public async Task WriteResponseAsync(byte[] response)
     {
-        if (_stream != null && response.Length > 0 && this._client.Connected)
+        try
         {
-            await _stream.WriteAsync(response);
-            await _stream.FlushAsync();
+            if (_stream != null && response.Length > 0 && this._client.Connected)
+            {
+                await _stream.WriteAsync(response);
+                await _stream.FlushAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Error writing response to client {ConnectionId}", _connectionId);
         }
     }
 
