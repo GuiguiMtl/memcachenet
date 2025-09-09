@@ -18,12 +18,6 @@ public class MemCacheServerSettings
     public int MaxKeys { get; set; } = 300;
 
     /// <summary>
-    /// Gets or sets the default expiration time for cached items in seconds.
-    /// </summary>
-    /// <value>The default expiration time is 60 seconds.</value>
-    public int ExpirationTimeSeconds { get; set; } = 60;
-
-    /// <summary>
     /// Gets or sets the maximum number of concurrent client connections allowed.
     /// </summary>
     /// <value>The default maximum is 10 concurrent connections.</value>

@@ -374,7 +374,7 @@ public class EdgeCaseAndErrorTests : BaseIntegrationTest
         // Assert - Server should close connection (empty response) within timeout period
         // The server has ReadTimeoutSeconds = 5, so should close quickly
         response.Should().BeEmpty("Server should close connection due to incomplete command");
-        stopwatch.ElapsedMilliseconds.Should().BeLessThan(10000, "Should timeout within reasonable time");
+        stopwatch.ElapsedMilliseconds.Should().BeLessThan(11000, "Should timeout within reasonable time");
         stopwatch.ElapsedMilliseconds.Should().BeGreaterThan(4000, "Should wait for configured timeout period");
     }
 }

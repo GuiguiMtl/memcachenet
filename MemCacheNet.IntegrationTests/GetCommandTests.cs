@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace MemCacheNet.IntegrationTests;
 
 public class GetCommandTests : BaseIntegrationTest
@@ -100,7 +102,7 @@ public class GetCommandTests : BaseIntegrationTest
         // Arrange
         await ConnectAsync();
         var key = "binaryget";
-        var value = "Binary\0Data\xFF\xFE\r\n";
+        var value = "Binary\0Data\xFF\xFE";
         
         await SendSetCommandAsync(key, value);
 
@@ -108,7 +110,8 @@ public class GetCommandTests : BaseIntegrationTest
         var response = await SendGetCommandAsync(key);
 
         // Assert
-        response.Should().Contain($"VALUE {key} 0 {value.Length}");
+        var bytesCount = Encoding.UTF8.GetByteCount(value);
+        response.Should().Contain($"VALUE {key} 0 {bytesCount}");
         response.Should().Contain(value);
         response.Should().Contain("END");
     }

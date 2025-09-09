@@ -211,8 +211,9 @@ public class MemCacheConnectionHandlerTests
         // Act & Assert
         await RunConnectionTest(testData, capturedLines =>
         {
-            // Assert - Should not capture anything since memcache protocol requires \r\n
-            Assert.That(capturedLines, Has.Count.EqualTo(0), "Commands with only \\n should not be captured (memcache requires \\r\\n)");
+            // Assert - Should capture malformed command for error handling
+            Assert.That(capturedLines, Has.Count.EqualTo(1), "Commands with only \\n should be captured as malformed commands");
+            Assert.That(capturedLines[0], Is.EqualTo("get testkey\n"));
         });
     }
 
@@ -225,8 +226,9 @@ public class MemCacheConnectionHandlerTests
         // Act & Assert
         await RunConnectionTest(testData, capturedLines =>
         {
-            // Assert - Should not capture anything since TryReadLine looks for \n specifically
-            Assert.That(capturedLines, Has.Count.EqualTo(0), "Commands with only \\r should not be captured");
+            // Assert - Should capture malformed command for error handling
+            Assert.That(capturedLines, Has.Count.EqualTo(1), "Commands with only \\r should be captured as malformed commands");
+            Assert.That(capturedLines[0], Is.EqualTo("get testkey\r"));
         });
     }
 

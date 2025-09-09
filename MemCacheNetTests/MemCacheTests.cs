@@ -50,20 +50,6 @@ public class MemCacheBuilderTests
     }
 
     [Test]
-    public void WithExpirationTime_SetsExpirationTime_ReturnsBuilderInstance()
-    {
-        // Arrange
-        var builder = new MemCacheBuilder();
-        var expectedExpirationTime = TimeSpan.FromMinutes(30);
-
-        // Act
-        var result = builder.WithExpirationTime(expectedExpirationTime);
-
-        // Assert
-        Assert.That(result, Is.SameAs(builder));
-    }
-
-    [Test]
     public void WithExpirationPolicy_SetsEvictionPolicy_ReturnsBuilderInstance()
     {
         // Arrange
@@ -83,8 +69,7 @@ public class MemCacheBuilderTests
         // Arrange
         var builder = new MemCacheBuilder()
             .WithMaxKeys(100)
-            .WithMaxCacheSize(50000)
-            .WithExpirationTime(TimeSpan.FromMinutes(15));
+            .WithMaxCacheSize(50000);
 
         // Act
         var cache = builder.Build();
@@ -101,7 +86,6 @@ public class MemCacheBuilderTests
         var cache = new MemCacheBuilder()
             .WithMaxKeys(200)
             .WithMaxCacheSize(100000)
-            .WithExpirationTime(TimeSpan.FromHours(2))
             .WithExpirationPolicy(new LruEvictionPolicyManager())
             .Build();
 
@@ -124,7 +108,7 @@ public class MemCacheTests
     public void SetUp()
     {
         _mockEvictionPolicy = new Mock<IEvictionPolicyManager>();
-        _cache = new MemCache(MaxKeys, MaxCacheSize, _expirationTime, _mockEvictionPolicy.Object);
+        _cache = new MemCache(MaxKeys, MaxCacheSize, _mockEvictionPolicy.Object);
     }
 
     [TearDown]
@@ -146,7 +130,7 @@ public class MemCacheTests
             var evictionPolicy = new Mock<IEvictionPolicyManager>().Object;
 
             // Act
-            var cache = new MemCache(maxKeys, maxCacheSize, expirationTime, evictionPolicy);
+            var cache = new MemCache(maxKeys, maxCacheSize, evictionPolicy);
 
             // Assert
             Assert.That(cache, Is.Not.Null);
@@ -314,10 +298,10 @@ public class MemCacheTests
             var value = Encoding.UTF8.GetBytes("testValue");
             var shortExpirationTime = TimeSpan.FromMilliseconds(1);
             
-            var expiredCache = new MemCache(MaxKeys, MaxCacheSize, shortExpirationTime, _mockEvictionPolicy.Object);
+            var expiredCache = new MemCache(MaxKeys, MaxCacheSize, _mockEvictionPolicy.Object);
             
-            await expiredCache.SetAsync(key, value, 0);
-            await Task.Delay(10); // Wait for expiration
+            await expiredCache.SetAsync(key, value, 0, 1);
+            await Task.Delay(1100); // Wait for expiration
 
             // Act
             var result = await expiredCache.TryGetAsync(key);
@@ -403,7 +387,7 @@ public class MemCacheTests
         {
             // Arrange
             var shortExpirationTime = TimeSpan.FromMilliseconds(1);
-            var expiredCache = new MemCache(MaxKeys, MaxCacheSize, shortExpirationTime, _mockEvictionPolicy.Object);
+            var expiredCache = new MemCache(MaxKeys, MaxCacheSize, _mockEvictionPolicy.Object);
             
             // Add some keys that will expire
             await expiredCache.SetAsync("key1", Encoding.UTF8.GetBytes("value1"), 0);
@@ -423,7 +407,7 @@ public class MemCacheTests
         {
             // Arrange
             var shortExpirationTime = TimeSpan.FromMilliseconds(1);
-            var expiredCache = new MemCache(MaxKeys, MaxCacheSize, shortExpirationTime, _mockEvictionPolicy.Object);
+            var expiredCache = new MemCache(MaxKeys, MaxCacheSize, _mockEvictionPolicy.Object);
             
             await expiredCache.SetAsync("key1", Encoding.UTF8.GetBytes("value1"), 0);
             await Task.Delay(10); // Wait for expiration
@@ -442,7 +426,7 @@ public class MemCacheTests
         {
             // Arrange
             var longExpirationTime = TimeSpan.FromHours(1);
-            var nonExpiredCache = new MemCache(MaxKeys, MaxCacheSize, longExpirationTime, _mockEvictionPolicy.Object);
+            var nonExpiredCache = new MemCache(MaxKeys, MaxCacheSize, _mockEvictionPolicy.Object);
             
             await nonExpiredCache.SetAsync("key1", Encoding.UTF8.GetBytes("value1"), 0);
 
@@ -466,7 +450,6 @@ public class MemCacheIntegrationTests
         var cache = new MemCacheBuilder()
             .WithMaxKeys(2)
             .WithMaxCacheSize(1000)
-            .WithExpirationTime(TimeSpan.FromMinutes(10))
             .WithExpirationPolicy(new LruEvictionPolicyManager())
             .Build();
 
@@ -498,7 +481,6 @@ public class MemCacheIntegrationTests
         var cache = new MemCacheBuilder()
             .WithMaxKeys(10)
             .WithMaxCacheSize(smallCacheSize)
-            .WithExpirationTime(TimeSpan.FromMinutes(10))
             .Build();
 
         var oversizedValue = new byte[smallCacheSize + 1];
@@ -517,22 +499,20 @@ public class MemCacheIntegrationTests
     public async Task Cache_ExpirationScenario_AutomaticallyRemovesExpiredItems()
     {
         // Arrange
-        var shortExpiration = TimeSpan.FromMilliseconds(50);
         var cache = new MemCacheBuilder()
             .WithMaxKeys(10)
             .WithMaxCacheSize(1000)
-            .WithExpirationTime(shortExpiration)
             .Build();
 
         // Act
-        await cache.SetAsync("expiringKey", Encoding.UTF8.GetBytes("expiringValue"), 0);
+        await cache.SetAsync("expiringKey", Encoding.UTF8.GetBytes("expiringValue"), 0, 1);
         
         // Verify it exists initially
         var initialResult = await cache.TryGetAsync("expiringKey");
         Assert.That(initialResult, Is.Not.Null);
 
         // Wait for expiration
-        await Task.Delay(100);
+        await Task.Delay(1100);
         
         // Verify it's expired and removed
         var expiredResult = await cache.TryGetAsync("expiringKey");
@@ -548,7 +528,6 @@ public class MemCacheIntegrationTests
         var cache = new MemCacheBuilder()
             .WithMaxKeys(100)
             .WithMaxCacheSize(10000)
-            .WithExpirationTime(TimeSpan.FromMinutes(10))
             .WithExpirationPolicy(new LruEvictionPolicyManagerWithLock())
             .Build();
 
@@ -597,7 +576,6 @@ public class MemCacheItemTests
         Assert.That(item.Value, Is.Not.Null);
         Assert.That(item.Value, Is.Empty);
         Assert.That(item.Flags, Is.EqualTo(0));
-        Assert.That(item.Expiration, Is.EqualTo(default(DateTime)));
     }
 
     [Test]

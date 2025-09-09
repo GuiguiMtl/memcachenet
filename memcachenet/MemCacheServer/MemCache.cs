@@ -16,7 +16,7 @@ public interface IMemCache
     /// <param name="key">The key to associate with the value. Must be non-null and within protocol limits.</param>
     /// <param name="value">The raw bytes to store.</param>
     /// <param name="Flags">An opaque 32-bit value provided by clients and returned on retrieval.</param>
-    Task<bool> SetAsync(string key, byte[] value, uint Flags);
+    Task<bool> SetAsync(string key, byte[] value, uint Flags, uint Expiration = 0);
 
     /// <summary>
     /// Attempts to retrieve the value for the specified key.
@@ -50,13 +50,11 @@ public class MemCacheBuilder
 
     private const int DefaultMaxCacheSize = 102400;
     
-    private readonly TimeSpan _defaultExpirationTime = TimeSpan.FromHours(1);
     private readonly IEvictionPolicyManager _defaultEvictionPolicyManager = new LruEvictionPolicyManager();
     
     private int _maxKeys;
 
     private int _maxCacheSize;
-    private TimeSpan _expirationTime;
     private IEvictionPolicyManager _evictionPolicyManager;
 
     /// <summary>
@@ -66,7 +64,6 @@ public class MemCacheBuilder
     {
         _maxKeys = DefaultMaxKeys;
         _maxCacheSize = DefaultMaxCacheSize;
-        _expirationTime = _defaultExpirationTime;
         _evictionPolicyManager = _defaultEvictionPolicyManager;
     }
 
@@ -91,17 +88,6 @@ public class MemCacheBuilder
         _maxCacheSize = maxCacheSize;
         return this;
     }
-    
-    /// <summary>
-    /// Sets the default expiration time applied to new entries.
-    /// </summary>
-    /// <param name="expirationTime">Duration after which entries are considered expired.</param>
-    /// <returns>The same builder instance for chaining.</returns>
-    public MemCacheBuilder WithExpirationTime(TimeSpan expirationTime)
-    {
-        _expirationTime = expirationTime;
-        return this;
-    }
 
     /// <summary>
     /// Sets the expiration/eviction policy manager responsible for deciding which key to remove when capacity is reached.
@@ -119,7 +105,7 @@ public class MemCacheBuilder
     /// </summary>
     public MemCache Build()
     {
-        return new MemCache(_maxKeys, _maxCacheSize, _expirationTime, _evictionPolicyManager);
+        return new MemCache(_maxKeys, _maxCacheSize, _evictionPolicyManager);
     }
 }
 
@@ -130,7 +116,6 @@ public class MemCache : IMemCache
 {
     private readonly int _maxKeys;
     private readonly int _maxCacheSize;
-    private readonly TimeSpan _expirationTime;
     private readonly ConcurrentDictionary<string, MemCacheItem> _cache;
     private readonly IEvictionPolicyManager _evictionPolicyManager;
 
@@ -141,13 +126,11 @@ public class MemCache : IMemCache
     /// </summary>
     /// <param name="maxKeys">Maximum number of keys allowed before eviction.</param>
     /// <param name="maxCacheSize">Maximum total size of the values in the cache.</param>
-    /// <param name="expirationTime">Default TTL applied to entries when set.</param>
     /// <param name="evictionPolicyManager">Policy manager used to track/access eviction order.</param>
-    public MemCache(int maxKeys, int maxCacheSize, TimeSpan expirationTime, IEvictionPolicyManager evictionPolicyManager)
+    public MemCache(int maxKeys, int maxCacheSize, IEvictionPolicyManager evictionPolicyManager)
     {
         _maxKeys = maxKeys;
         _maxCacheSize = maxCacheSize;
-        _expirationTime = expirationTime;
         _evictionPolicyManager = evictionPolicyManager;
         _cache = new ConcurrentDictionary<string, MemCacheItem>();
         _cacheSize = 0;
@@ -159,7 +142,7 @@ public class MemCache : IMemCache
     /// <param name="key">The key to set.</param>
     /// <param name="value">The value bytes to store.</param>
     /// <param name="Flags">Opaque client flags to persist with the value.</param>
-    public async Task<bool> SetAsync(string key, byte[] value, uint Flags)
+    public async Task<bool> SetAsync(string key, byte[] value, uint Flags, uint expiration = 0)
     {
         // Check cache size limit
         if (_cacheSize + value.Length > _maxCacheSize)
@@ -190,7 +173,7 @@ public class MemCache : IMemCache
         {
             Value = value,
             Flags = Flags,
-            Expiration = DateTime.Now.Add(_expirationTime)
+            Expiration = expiration == 0 ? null : DateTime.Now.AddSeconds(expiration)
         };
         await _evictionPolicyManager.Add(key);
 
@@ -210,7 +193,7 @@ public class MemCache : IMemCache
             if (_cache.TryGetValue(key, out var item))
             {
                 // Check the expiration date
-                if (item.Expiration < DateTime.Now)
+                if (item.Expiration != null && item.Expiration < DateTime.Now)
                 {
                     // Key is expired, remove it
                     _cache.Remove(key, out var removedItem);
@@ -254,9 +237,8 @@ public class MemCache : IMemCache
     public async Task DeleteExpiredKeysAsync(int sampleSize = 20)
     {
         // Take a random sample of keys to check
-        var keysToCheck = _cache.Keys.OrderBy(k => Guid.NewGuid()).Take(sampleSize).ToList();
-        var keysToDelete = new List<string>();
-
+        var keysToCheck = _cache.Keys.Take(sampleSize).ToList();
+        var keysToDelete = new List<string>();  
             // Check which keys are expired while holding the lock
             foreach (var key in keysToCheck)
             {
@@ -296,5 +278,5 @@ public class MemCacheItem
     /// <summary>
     /// Absolute expiration timestamp for this entry.
     /// </summary>
-    public DateTime Expiration;
+    public DateTime? Expiration;
 }

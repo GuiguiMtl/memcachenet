@@ -105,6 +105,9 @@ class Program
             builder.Services.AddSingleton<MemCacheCommandParser>();
 
             builder.Services.AddHostedService(p => p.GetRequiredService<MemCacheServer.MemCacheServer>());
+
+            // Optionally add the ExpirationManagerService as a hosted service 
+            // This will actively remove expired items from the cache - not strictly necessary for functionality
             // builder.Services.AddHostedService(p => p.GetRequiredService<ExpirationManagerService>());
 
             var app = builder.Build();

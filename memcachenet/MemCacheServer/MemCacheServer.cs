@@ -45,8 +45,6 @@ public class MemCacheServer : IHostedService
         _loggerFactory = loggerFactory;
         _parser = new MemCacheCommandParser(settings.MaxKeySizeBytes, settings.MaxDataSizeBytes);
         _memCache = new MemCacheBuilder()
-                            .WithExpirationTime(
-                                TimeSpan.FromSeconds(settings.ExpirationTimeSeconds))
                             .WithMaxKeys(settings.MaxKeys)
                             .WithMaxCacheSize(settings.MaxTotalCacheSizeBytes)
                             .WithExpirationPolicy(new LruEvictionPolicyManagerWithLock())
