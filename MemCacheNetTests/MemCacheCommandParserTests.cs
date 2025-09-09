@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Text;
 using memcachenet.MemCacheServer;
+using memcachenet.MemCacheServer.Commands;
 
 namespace MemCacheNetTests;
 

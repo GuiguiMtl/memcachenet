@@ -1,4 +1,4 @@
-namespace memcachenet.MemCacheServer.EvictionPolicyManager;
+namespace memcachenet.MemCacheServer.EvictionPolicyManagers;
 
 public class LruEvictionPolicyManagerWithLock :  IEvictionPolicyManager
 {

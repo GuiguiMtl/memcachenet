@@ -1,6 +1,6 @@
 using System.Text;
 using memcachenet.MemCacheServer;
-using memcachenet.MemCacheServer.EvictionPolicyManager;
+using memcachenet.MemCacheServer.EvictionPolicyManagers;
 using Moq;
 using NUnit.Framework;
 

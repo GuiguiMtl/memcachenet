@@ -1,8 +1,7 @@
 using System.Buffers;
-using System.Buffers.Text;
 using System.Globalization;
 
-namespace memcachenet.MemCacheServer;
+namespace memcachenet.MemCacheServer.Validations;
 
 /// <summary>
 /// Provides validation functionality for memcached commands and their parameters.

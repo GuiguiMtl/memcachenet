@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using System.Reflection.Metadata;
-using memcachenet.MemCacheServer.EvictionPolicyManager;
+using memcachenet.MemCacheServer.EvictionPolicyManagers;
 
 namespace memcachenet.MemCacheServer;
 

@@ -1,8 +1,9 @@
 using System.Buffers;
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
-using memcachenet.MemCacheServer.EvictionPolicyManager;
+using memcachenet.MemCacheServer.Commands;
+using memcachenet.MemCacheServer.EvictionPolicyManagers;
+using memcachenet.MemCacheServer.Settings;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -86,21 +87,15 @@ public class MemCacheServer : IHostedService
                     _settings,
                     connectionHandlerLogger);
                 
-                // Start connection session span and handle connection asynchronously
+                // Handle connection asynchronously
                 _ = Task.Run(async () =>
                 {
-                    using var sessionActivity = MemCacheTelemetry.ActivitySource.StartActivity(MemCacheTelemetry.ActivityNames.ConnectionSession);
-                    sessionActivity?.SetTag(MemCacheTelemetry.Tags.ConnectionId, connectionId);
-                    sessionActivity?.SetTag(MemCacheTelemetry.Tags.ClientEndpoint, clientEndpoint);
-                    
                     try
                     {
                         await connectionHandler.HandleConnectionAsync(_serverCancellationTokenSource.Token);
                     }
                     catch (Exception ex)
                     {
-                        sessionActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                        sessionActivity?.SetTag(MemCacheTelemetry.Tags.ErrorType, ex.GetType().Name);
                         _logger.LogError(ex, "Error handling connection {ConnectionId}: {ErrorMessage}", connectionId, ex.Message);
                     }
                     finally
@@ -134,13 +129,9 @@ public class MemCacheServer : IHostedService
 
     private async void OnCommandLineRead(ReadOnlySequence<byte> line, Func<byte[], Task> writeResponse, string connectionId)
     {
-        using var activity = MemCacheTelemetry.ActivitySource.StartActivity(MemCacheTelemetry.ActivityNames.CommandHandle);
-        activity?.SetTag(MemCacheTelemetry.Tags.ConnectionId, connectionId);
-        
         try
         {
             var command = _parser.ParseCommand(line);
-            activity?.SetTag(MemCacheTelemetry.Tags.CommandType, command.GetType().Name);
             
             var response = await command.HandleAsync(_commandHandler);
             await writeResponse(response);
@@ -150,9 +141,6 @@ public class MemCacheServer : IHostedService
         }
         catch (Exception ex)
         {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.SetTag(MemCacheTelemetry.Tags.ErrorType, ex.GetType().Name);
-            
             _logger.LogError(ex, "Error processing command for connection {ConnectionId}", connectionId);
             
             // Send error response

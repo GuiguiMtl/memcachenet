@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace memcachenet.MemCacheServer;
+namespace memcachenet.MemCacheServer.Validations;
 
 /// <summary>
 /// Provides validation functionality for memcached keys according to protocol specifications.

@@ -1,5 +1,7 @@
 using System.Text;
 
+namespace memcachenet.MemCacheServer.MemCacheResponses;
+
 /// <summary>
 /// Provides formatting utilities for MemCache command responses according to the memcached protocol.
 /// </summary>

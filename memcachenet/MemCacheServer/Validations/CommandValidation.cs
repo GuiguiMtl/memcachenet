@@ -1,4 +1,4 @@
-namespace memcachenet.MemCacheServer;
+namespace memcachenet.MemCacheServer.Validations;
 
 /// <summary>
 /// Represents the types of validation errors that can occur during command parsing.

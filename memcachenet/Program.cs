@@ -3,11 +3,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using OpenTelemetry;
-using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
 using Serilog;
 using System;
+using memcachenet.MemCacheServer.Commands;
+using memcachenet.MemCacheServer.ExpirationManagers;
+using memcachenet.MemCacheServer.Settings;
 
 namespace memcachenet;
 
@@ -39,66 +39,7 @@ class Program
                 builder.Configuration.GetSection("MemCacheServerSettings"));
             builder.Services.Configure<ExpirationManagerSettings>(
                 builder.Configuration.GetSection("ExpirationManagerSettings"));
-            builder.Services.Configure<OpenTelemetrySettings>(
-                builder.Configuration.GetSection("OpenTelemetry"));
 
-            // Configure OpenTelemetry
-            var telemetrySettings = builder.Configuration.GetSection("OpenTelemetry").Get<OpenTelemetrySettings>() ?? new OpenTelemetrySettings();
-            
-            if (telemetrySettings.TracingEnabled)
-            {
-                builder.Services.AddOpenTelemetry()
-                    .ConfigureResource(resource => resource
-                        .AddService(telemetrySettings.ServiceName, telemetrySettings.ServiceVersion)
-                        .AddAttributes(new Dictionary<string, object>
-                        {
-                            ["service.instance.id"] = Environment.MachineName,
-                            ["service.version"] = telemetrySettings.ServiceVersion,
-                            ["deployment.environment"] = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"
-                        }))
-                    .WithTracing(tracerProviderBuilder =>
-                    {
-                        tracerProviderBuilder.AddSource(MemCacheTelemetry.ActivitySourceName);
-                        
-                        // Configure sampling (using standard samplers)
-                        if (telemetrySettings.Sampling.Type.ToLower() == "alwaysoff")
-                        {
-                            tracerProviderBuilder.SetSampler(new AlwaysOffSampler());
-                        }
-                        else
-                        {
-                            tracerProviderBuilder.SetSampler(new AlwaysOnSampler());
-                        }
-                        
-                        // Configure exporters
-                        if (telemetrySettings.Exporters.Console.Enabled)
-                        {
-                            tracerProviderBuilder.AddConsoleExporter(options =>
-                            {
-                                var consoleSettings = telemetrySettings.Exporters.Console;
-                                
-                                // Configure console targets
-                                if (consoleSettings.Targets.Contains("Debug", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    options.Targets = OpenTelemetry.Exporter.ConsoleExporterOutputTargets.Debug;
-                                }
-                                else
-                                {
-                                    options.Targets = OpenTelemetry.Exporter.ConsoleExporterOutputTargets.Console;
-                                }
-                            });
-                        }
-                        
-                        if (telemetrySettings.Exporters.OTLP.Enabled)
-                        {
-                            tracerProviderBuilder.AddOtlpExporter(options =>
-                            {
-                                options.Endpoint = new Uri(telemetrySettings.Exporters.OTLP.Endpoint);
-                                options.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf;
-                            });
-                        }
-                    });
-            }
 
             builder.Services.AddSingleton<MemCacheServer.MemCacheServer>();
             builder.Services.AddSingleton<ExpirationManagerService>();

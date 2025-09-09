@@ -1,8 +1,8 @@
 using System.Buffers;
-using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Net.Sockets;
 using System.Text;
+using memcachenet.MemCacheServer.Settings;
 using Microsoft.Extensions.Logging;
 
 namespace memcachenet.MemCacheServer;
@@ -129,9 +129,6 @@ public class MemCacheConnectionHandler(
     /// <returns>A task representing the asynchronous fill operation.</returns>
     private async Task FillPipeAsync(CancellationToken token, NetworkStream stream, PipeWriter writer)
     {
-        using var activity = MemCacheTelemetry.ActivitySource.StartActivity(MemCacheTelemetry.ActivityNames.PipelineFill);
-        activity?.SetTag(MemCacheTelemetry.Tags.ConnectionId, _connectionId);
-        
         const int minimumBufferSize = 512;
         var totalBytesRead = 0;
 
@@ -162,12 +159,11 @@ public class MemCacheConnectionHandler(
         }
         catch (Exception ex)
         {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.SetTag(MemCacheTelemetry.Tags.ErrorType, ex.GetType().Name);
+            _logger?.LogError(ex, "Error filling pipe for connection {ConnectionId}", _connectionId);
         }
         finally
         {
-            activity?.SetTag(MemCacheTelemetry.Tags.DataSize, totalBytesRead);
+            _logger?.LogTrace("Filled pipe with {TotalBytesRead} bytes for connection {ConnectionId}", totalBytesRead, _connectionId);
             // By completing PipeWriter, tell the PipeReader that there's no more data coming.
             await writer.CompleteAsync();
         }
@@ -180,9 +176,6 @@ public class MemCacheConnectionHandler(
     /// <returns>A task representing the asynchronous read operation.</returns>
     private async Task ReadPipeAsync(CancellationToken token, PipeReader reader)
     {
-        using var activity = MemCacheTelemetry.ActivitySource.StartActivity(MemCacheTelemetry.ActivityNames.PipelineRead);
-        activity?.SetTag(MemCacheTelemetry.Tags.ConnectionId, _connectionId);
-        
         var commandCount = 0;
         
         try
@@ -225,9 +218,6 @@ public class MemCacheConnectionHandler(
                 while (TryReadMemCacheCommand(ref buffer, out ReadOnlySequence<byte> command))
                 {
                     commandCount++;
-                    using var commandActivity = MemCacheTelemetry.ActivitySource.StartActivity(MemCacheTelemetry.ActivityNames.CommandRead);
-                    commandActivity?.SetTag(MemCacheTelemetry.Tags.ConnectionId, _connectionId);
-                    commandActivity?.SetTag(MemCacheTelemetry.Tags.DataSize, command.Length);
                     
                     _logger?.LogDebug("Processing command {CommandNumber} for connection {ConnectionId}, size: {CommandSize} bytes", 
                         commandCount, _connectionId, command.Length);
@@ -253,13 +243,10 @@ public class MemCacheConnectionHandler(
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Error reading pipe for connection {ConnectionId}: {ErrorMessage}", _connectionId, ex.Message);
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.SetTag(MemCacheTelemetry.Tags.ErrorType, ex.GetType().Name);
         }
         finally
         {
             _logger?.LogDebug("Finished processing {CommandCount} commands for connection {ConnectionId}", commandCount, _connectionId);
-            activity?.SetTag("memcache.commands.processed", commandCount);
             // Mark the PipeReader as complete.
             await reader.CompleteAsync();
         }

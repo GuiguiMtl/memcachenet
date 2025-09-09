@@ -72,7 +72,7 @@ Each memcached command is implemented as a separate class:
 - **Concurrency**: Uses `SemaphoreSlim` to limit concurrent connections
 - **Protocol**: Full memcached text protocol with proper `\r\n` termination
 - **Memory**: Uses `ReadOnlySequence<byte>` for zero-copy parsing
-- **Observability**: OpenTelemetry tracing and structured logging throughout
+- **Observability**: Structured logging throughout
 - **Error Handling**: Proper protocol error responses (`CLIENT_ERROR`, `SERVER_ERROR`)
 
 ## Testing Strategy
@@ -134,11 +134,6 @@ The application uses structured logging with different levels:
 - Command execution
 - Cache operations and evictions
 
-### Telemetry
-OpenTelemetry tracing is integrated for monitoring:
-- Connection spans
-- Command execution spans
-- Cache operation spans
 
 ### Common Issues
 - **Integration test hanging**: Ensure `noreply` tests use `SendNoReplyCommandAsync()`

@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Text;
 using NUnit.Framework;
 using memcachenet.MemCacheServer;
+using memcachenet.MemCacheServer.Validations;
 
 namespace MemCacheNetTests;
 

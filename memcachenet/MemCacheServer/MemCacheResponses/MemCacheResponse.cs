@@ -1,3 +1,5 @@
+namespace memcachenet.MemCacheServer.MemCacheResponses;
+
 /// <summary>
 /// Base class for all MemCache command responses.
 /// </summary>

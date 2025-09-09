@@ -1,4 +1,6 @@
 using System.Text;
+using memcachenet.MemCacheServer;
+using memcachenet.MemCacheServer.MemCacheResponses;
 using NUnit.Framework;
 
 namespace MemCacheNetTests;
